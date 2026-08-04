@@ -5,8 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "build:sites": "vinext build",
-    "preview:sites": "vinext start",
+    "build:sites": "vite build",
+    "preview:sites": "vite preview",
     "start": "next start",
     "lint": "eslint ."
   },
