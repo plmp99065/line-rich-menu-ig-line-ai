@@ -189,7 +189,7 @@ async function lineWebhook(request: Request, env: Env) {
   const body = await request.text();
   const channelSecret = await getCredential(env, "LINE_CHANNEL_SECRET");
   if (!(await verifyLine(body, request.headers.get("x-line-signature"), channelSecret))) return json({ error: "Invalid signature" }, 401);
-  const payload = JSON.parse(body) as { events?: Array<{ type: string; timestamp?: number; source?: { userId?: string }; message?: { id?: string; type: string; text?: string } }> };
+  const payload = JSON.parse(body) as { events?: Array<{ type: string; timestamp?: number; replyToken?: string; source?: { userId?: string }; message?: { id?: string; type: string; text?: string } }> };
   for (const event of payload.events || []) {
     if (event.type !== "message" || event.message?.type !== "text" || !event.source?.userId) continue;
     const text = event.message.text || "";
@@ -209,6 +209,17 @@ async function lineWebhook(request: Request, env: Env) {
       current.conversations.unshift({ id: `line-${event.source.userId}`, name, lineId: event.source.userId.slice(-8), lineUserId: event.source.userId, avatar: name.slice(0, 1), preview: text, time, unread: 1, status: "human", tags: ["LINE 新訊息"], messages: [message] });
     }
     await writeConversationState(env, current.conversations);
+    if (event.replyToken && await credentialStatus(env, "LINE_CHANNEL_ACCESS_TOKEN")) {
+      const reply = await env.DB.prepare("SELECT page, action_id AS actionId, response_mode AS responseMode, reply_text AS replyText, image_base64 AS imageBase64, image_version AS imageVersion FROM rich_menu_responses WHERE trigger_text = ? ORDER BY updated_at DESC LIMIT 1")
+        .bind(text).first<{ page: string; actionId: number; responseMode: "text" | "image" | "text_image"; replyText?: string; imageBase64?: string; imageVersion: number }>();
+      if (reply) {
+        const imageUrl = `${new URL(request.url).origin}/api/public/reply-image/${reply.page}/${reply.actionId}?v=${reply.imageVersion}`;
+        const messages: Array<Record<string, string>> = [];
+        if ((reply.responseMode === "image" || reply.responseMode === "text_image") && reply.imageBase64) messages.push({ type: "image", originalContentUrl: imageUrl, previewImageUrl: imageUrl });
+        if ((reply.responseMode === "text" || reply.responseMode === "text_image") && reply.replyText?.trim()) messages.push({ type: "text", text: reply.replyText.trim() });
+        if (messages.length) await lineApi(env, "/v2/bot/message/reply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ replyToken: event.replyToken, messages }) });
+      }
+    }
   }
   return json({ ok: true });
 }
@@ -231,7 +242,54 @@ async function sendLineMessage(request: Request, env: Env) {
   return json({ ok: true, demo: false, message: sent });
 }
 
-type RichActionInput = { id: number; label: string; type: "uri" | "message" | "richmenuswitch"; value: string };
+type ReplyMode = "text" | "image" | "text_image";
+type RichActionInput = { id: number; label: string; type: "uri" | "message" | "richmenuswitch"; value: string; responseMode?: ReplyMode; replyText?: string; replyImageData?: string; replyImageName?: string };
+
+async function getRichMenuResponses(request: Request, env: Env) {
+  if (!isAuthorized(request, env)) return json({ error: "未授權" }, 401);
+  const page = new URL(request.url).searchParams.get("page");
+  if (page !== "home" && page !== "service") return json({ error: "頁面不正確" }, 400);
+  const rows = await env.DB.prepare("SELECT action_id AS id, response_mode AS responseMode, reply_text AS replyText, image_name AS replyImageName, image_version AS imageVersion, CASE WHEN image_base64 IS NULL THEN 0 ELSE 1 END AS hasImage FROM rich_menu_responses WHERE page = ? ORDER BY action_id")
+    .bind(page).all<{ id: number; responseMode: ReplyMode; replyText: string; replyImageName?: string; imageVersion: number; hasImage: number }>();
+  const origin = new URL(request.url).origin;
+  return json({ ok: true, actions: rows.results.map(row => ({ ...row, replyImageUrl: row.hasImage ? `${origin}/api/public/reply-image/${page}/${row.id}?v=${row.imageVersion}` : undefined })) });
+}
+
+async function saveRichMenuResponses(request: Request, env: Env) {
+  if (!isAuthorized(request, env)) return json({ error: "未授權" }, 401);
+  const input = await request.json<{ page?: "home" | "service"; actions?: RichActionInput[] }>().catch(() => ({} as { page?: "home" | "service"; actions?: RichActionInput[] }));
+  if (!input.page || !Array.isArray(input.actions) || input.actions.length !== 6) return json({ error: "需要完整設定六個選項" }, 400);
+  for (const action of input.actions) {
+    if (!Number.isInteger(action.id) || action.id < 1 || action.id > 6) return json({ error: "按鈕編號不正確" }, 400);
+    const isMessageAction = action.type === "message";
+    const mode: ReplyMode = isMessageAction && ["image", "text_image"].includes(action.responseMode || "") ? action.responseMode! : "text";
+    const existing = await env.DB.prepare("SELECT image_base64 AS imageBase64, image_mime AS imageMime, image_name AS imageName, image_version AS imageVersion FROM rich_menu_responses WHERE page = ? AND action_id = ?")
+      .bind(input.page, action.id).first<{ imageBase64?: string; imageMime?: string; imageName?: string; imageVersion?: number }>();
+    let imageBase64 = existing?.imageBase64 || null;
+    let imageMime = existing?.imageMime || null;
+    let imageName = existing?.imageName || null;
+    let imageVersion = existing?.imageVersion || 1;
+    if (action.replyImageData) {
+      const match = action.replyImageData.match(/^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/);
+      if (!match) return json({ error: `按鈕 ${action.id} 的圖片格式不正確` }, 400);
+      if (match[2].length > 1400000) return json({ error: `按鈕 ${action.id} 的圖片需小於 1 MB` }, 400);
+      imageMime = match[1]; imageBase64 = match[2]; imageName = (action.replyImageName || `reply-${action.id}`).slice(0, 120); imageVersion += 1;
+    }
+    if (isMessageAction && (mode === "image" || mode === "text_image") && !imageBase64) return json({ error: `按鈕 ${action.id} 請先上傳回覆圖片` }, 400);
+    const triggerText = (isMessageAction ? action.value : `__disabled__${input.page}_${action.id}`).trim().slice(0, 300);
+    if (!triggerText) return json({ error: `按鈕 ${action.id} 缺少觸發文字` }, 400);
+    await env.DB.prepare("INSERT INTO rich_menu_responses (page, action_id, trigger_text, response_mode, reply_text, image_base64, image_mime, image_name, image_version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(page, action_id) DO UPDATE SET trigger_text = excluded.trigger_text, response_mode = excluded.response_mode, reply_text = excluded.reply_text, image_base64 = excluded.image_base64, image_mime = excluded.image_mime, image_name = excluded.image_name, image_version = excluded.image_version, updated_at = CURRENT_TIMESTAMP")
+      .bind(input.page, action.id, triggerText, mode, (action.replyText || "").trim().slice(0, 1000), imageBase64, imageMime, imageName, imageVersion).run();
+  }
+  return json({ ok: true });
+}
+
+async function serveReplyImage(request: Request, env: Env, page: string, actionId: number) {
+  const row = await env.DB.prepare("SELECT image_base64 AS imageBase64, image_mime AS imageMime FROM rich_menu_responses WHERE page = ? AND action_id = ?").bind(page, actionId).first<{ imageBase64?: string; imageMime?: string }>();
+  if (!row?.imageBase64 || !row.imageMime) return new Response("Not found", { status: 404 });
+  const bytes = decodeBase64(row.imageBase64);
+  return new Response(bytes.buffer as ArrayBuffer, { headers: { "Content-Type": row.imageMime, "Cache-Control": "public, max-age=31536000, immutable" } });
+}
 
 function toLineAction(action: RichActionInput) {
   if (action.type === "uri") return { type: "uri", label: action.label.slice(0, 20), uri: action.value };
@@ -305,7 +363,11 @@ export default {
     if (url.pathname === "/api/integrations/test" && request.method === "POST") return testIntegration(request, env);
     if (url.pathname === "/api/line/webhook" && request.method === "POST") return lineWebhook(request, env);
     if (url.pathname === "/api/line/messages/send" && request.method === "POST") return sendLineMessage(request, env);
+    if (url.pathname === "/api/line/rich-menu/responses" && request.method === "GET") return getRichMenuResponses(request, env);
+    if (url.pathname === "/api/line/rich-menu/responses" && request.method === "POST") return saveRichMenuResponses(request, env);
     if (url.pathname === "/api/line/rich-menu/publish" && request.method === "POST") return publishRichMenu(request, env);
+    const replyImage = url.pathname.match(/^\/api\/public\/reply-image\/(home|service)\/(\d+)$/);
+    if (replyImage && request.method === "GET") return serveReplyImage(request, env, replyImage[1], Number(replyImage[2]));
     return env.ASSETS.fetch(request);
   },
 };

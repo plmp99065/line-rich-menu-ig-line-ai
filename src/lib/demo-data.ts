@@ -15,14 +15,14 @@ export const conversations: Conversation[] = [
   { id: "c5", name: "許小樂", lineId: "@happyham", avatar: "樂", preview: "倉鼠今天突然不太吃東西…", time: "昨天", unread: 0, status: "human", tags: ["緊急", "健康問題"], messages: [{ id: "m7", role: "customer", text: "倉鼠今天突然不太吃東西，精神也不好，怎麼辦？", time: "昨天" }] },
 ];
 
-export const defaultActions: RichAction[] = [
+export const defaultActions: RichAction[] = ([
   { id: 1, label: "住宿預約", type: "uri", value: "https://example.com/booking" },
   { id: 2, label: "住宿價目", type: "message", value: "住宿價目" },
   { id: 3, label: "接送方式", type: "message", value: "接送方式" },
   { id: 4, label: "商品選購", type: "uri", value: "https://instagram.com/" },
   { id: 5, label: "住宿須知", type: "message", value: "住宿須知" },
   { id: 6, label: "聯絡客服", type: "message", value: "轉接人工客服" },
-];
+] as Omit<RichAction, "responseMode" | "replyText">[]).map(action => ({ ...action, responseMode: "text", replyText: action.value }));
 
 export const knowledgeSeed = [
   { id: 1, title: "2026 住宿價目表", type: "PDF", updated: "今天 09:42", status: "已索引", chunks: 18 },

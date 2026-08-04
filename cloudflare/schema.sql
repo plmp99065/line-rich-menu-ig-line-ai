@@ -19,3 +19,19 @@ CREATE TABLE IF NOT EXISTS integration_secrets (
   iv TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS rich_menu_responses (
+  page TEXT NOT NULL,
+  action_id INTEGER NOT NULL,
+  trigger_text TEXT NOT NULL,
+  response_mode TEXT NOT NULL DEFAULT 'text',
+  reply_text TEXT,
+  image_base64 TEXT,
+  image_mime TEXT,
+  image_name TEXT,
+  image_version INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (page, action_id)
+);
+
+CREATE INDEX IF NOT EXISTS rich_menu_responses_trigger ON rich_menu_responses(trigger_text);

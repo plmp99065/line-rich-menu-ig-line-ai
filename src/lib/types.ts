@@ -27,4 +27,9 @@ export type RichAction = {
   label: string;
   type: "uri" | "message" | "richmenuswitch";
   value: string;
+  responseMode: "text" | "image" | "text_image";
+  replyText: string;
+  replyImageData?: string;
+  replyImageName?: string;
+  replyImageUrl?: string;
 };
