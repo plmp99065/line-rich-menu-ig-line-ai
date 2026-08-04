@@ -16,7 +16,7 @@ export function RichMenuEditor() {
   const update = (patch: Partial<RichAction>) => setActions(old => old.map(a => a.id === selected ? { ...a, ...patch } : a));
   async function publish() {
     setPublishing(true); setNotice("正在建立 LINE Rich Menu…");
-    try { const res = await fetch(apiUrl("/api/line/rich-menu/publish"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ page, actions }) }); const data = await res.json(); setNotice(data.result?.demo ? "示範模式：加入 LINE 憑證後即可正式發佈" : "已成功發佈至 LINE"); }
+    try { const res = await fetch(apiUrl("/api/line/rich-menu/publish"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ page, actions }) }); const data = await res.json() as { result?: { demo?: boolean } }; setNotice(data.result?.demo ? "示範模式：加入 LINE 憑證後即可正式發佈" : "已成功發佈至 LINE"); }
     catch { setNotice("發佈失敗，請檢查 LINE 設定"); } finally { setPublishing(false); }
   }
   return <main className="rich-page">

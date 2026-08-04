@@ -1,12 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Check, ChevronDown, Clock3, Edit3, MessageCircle, MoreHorizontal, Paperclip, Search, Send, Sparkles, UserRound, X } from "lucide-react";
 import { conversations as seed } from "@/lib/demo-data";
 import { apiUrl } from "@/lib/api";
 import type { Conversation, Message } from "@/lib/types";
 
-export function InboxView() {
+export function InboxView({ accessCode }: { accessCode: string }) {
   const [items, setItems] = useState(seed);
   const [selectedId, setSelectedId] = useState(seed[0].id);
   const [filter, setFilter] = useState("全部");
@@ -14,10 +14,55 @@ export function InboxView() {
   const [draft, setDraft] = useState("您好～感謝提供資訊！6/10～6/14 兩隻黃金鼠的房況需要由人員確認，我先為您保留詢問紀錄。住宿五天的參考費用為 NT$1,800，確認房況後會再回覆您。需要我同時協助確認接送嗎？");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const revisionRef = useRef(0);
   const selected = items.find(c => c.id === selectedId) || items[0];
   const visible = useMemo(() => items.filter(c => (filter === "全部" || (filter === "未讀" && c.unread) || (filter === "待處理" && c.status !== "resolved")) && (c.name.includes(query) || c.preview.includes(query))), [items, filter, query]);
 
-  function updateSelected(fn: (c: Conversation) => Conversation) { setItems(old => old.map(c => c.id === selected.id ? fn(c) : c)); }
+  useEffect(() => {
+    let active = true;
+    async function pull() {
+      try {
+        const response = await fetch(apiUrl("/api/sync/conversations"), { headers: { "X-Admin-Code": accessCode } });
+        if (!response.ok) return;
+        const data = await response.json() as { state?: { conversations?: Conversation[] }; revision: number };
+        if (!active) return;
+        if (Array.isArray(data.state?.conversations) && data.state.conversations.length > 0 && data.revision > revisionRef.current) {
+          revisionRef.current = data.revision;
+          setItems(data.state.conversations);
+        } else if (data.revision === 0 && data.state?.conversations?.length === 0) {
+          await persist(seed, 0);
+        }
+      } catch { /* Keep the latest local state while temporarily offline. */ }
+    }
+    void pull();
+    const timer = window.setInterval(pull, 3000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [accessCode]);
+
+  async function persist(next: Conversation[], baseRevision = revisionRef.current) {
+    setSyncing(true);
+    try {
+      const response = await fetch(apiUrl("/api/sync/conversations"), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Admin-Code": accessCode },
+        body: JSON.stringify({ conversations: next, baseRevision }),
+      });
+      const data = await response.json() as { state?: { conversations?: Conversation[] }; revision: number };
+      if (response.status === 409 && Array.isArray(data.state?.conversations)) {
+        revisionRef.current = data.revision;
+        setItems(data.state.conversations);
+      } else if (response.ok) revisionRef.current = data.revision;
+    } finally { setSyncing(false); }
+  }
+
+  function updateSelected(fn: (c: Conversation) => Conversation) {
+    setItems(old => {
+      const next = old.map(c => c.id === selected.id ? fn(c) : c);
+      void persist(next);
+      return next;
+    });
+  }
   function send(text: string, role: Message["role"] = "agent") {
     if (!text.trim()) return;
     updateSelected(c => ({ ...c, preview: text, messages: [...c.messages, { id: crypto.randomUUID(), role, text, time: new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit" }) }] }));
@@ -28,13 +73,13 @@ export function InboxView() {
     try {
       const last = [...selected.messages].reverse().find(m => m.role === "customer")?.text || selected.preview;
       const response = await fetch(apiUrl("/api/ai/draft"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: last, context: "住宿五天參考價 NT$1,800。即時空房一律轉人工確認。可提供接送服務，範圍與費用需確認地址。" }) });
-      const data = await response.json();
+      const data = await response.json() as { draft?: string };
       if (data.draft) setDraft(data.draft);
     } finally { setLoading(false); }
   }
 
   return <main className="inbox-page">
-    <div className="page-title-row"><div><h1>客服收件匣</h1><p>集中處理 LINE 顧客訊息與 AI 回覆草稿</p></div><div className="header-tools"><span className="mode"><i/> AI 草稿模式</span><button className="icon-btn"><MoreHorizontal size={19}/></button></div></div>
+    <div className="page-title-row"><div><h1>客服收件匣</h1><p>集中處理 LINE 顧客訊息與 AI 回覆草稿</p></div><div className="header-tools"><span className="mode"><i/> {syncing ? "同步中…" : "兩台已同步"}</span><button className="icon-btn"><MoreHorizontal size={19}/></button></div></div>
     <div className="inbox-layout">
       <section className="conversation-rail">
         <label className="search"><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="搜尋顧客或訊息"/></label>

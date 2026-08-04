@@ -6,5 +6,8 @@
   "display": "standalone",
   "background_color": "#f7f8fb",
   "theme_color": "#07b53b",
-  "description": "LINE 圖文選單、客服收件匣與 AI 回覆管理"
+  "description": "LINE 圖文選單、客服收件匣與 AI 回覆管理",
+  "icons": [
+    { "src": "app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
 }

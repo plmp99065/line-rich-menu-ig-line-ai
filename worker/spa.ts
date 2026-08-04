@@ -1,5 +1,7 @@
 interface Env {
   ASSETS: Fetcher;
+  DB: D1Database;
+  ADMIN_ACCESS_CODE?: string;
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
   LINE_CHANNEL_SECRET?: string;
@@ -8,11 +10,47 @@ interface Env {
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "https://plmp99065.github.io",
-  "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, X-Admin-Code, X-Device-Id",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
 };
 
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: corsHeaders });
+
+function isAuthorized(request: Request, env: Env) {
+  return Boolean(env.ADMIN_ACCESS_CODE) && request.headers.get("x-admin-code") === env.ADMIN_ACCESS_CODE;
+}
+
+async function verifySession(request: Request, env: Env) {
+  if (!isAuthorized(request, env)) return json({ error: "管理碼錯誤" }, 401);
+  const input: { deviceId?: string; deviceName?: string } = await request.json<{ deviceId?: string; deviceName?: string }>().catch(() => ({}));
+  if (input.deviceId && input.deviceName) {
+    await env.DB.prepare(
+      "INSERT INTO devices (id, name, last_seen) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET name = excluded.name, last_seen = CURRENT_TIMESTAMP",
+    ).bind(input.deviceId, input.deviceName.slice(0, 40)).run();
+  }
+  const devices = await env.DB.prepare("SELECT id, name, last_seen AS lastSeen FROM devices ORDER BY last_seen DESC LIMIT 2").all();
+  return json({ ok: true, devices: devices.results });
+}
+
+async function getSharedState(request: Request, env: Env) {
+  if (!isAuthorized(request, env)) return json({ error: "未授權" }, 401);
+  const row = await env.DB.prepare("SELECT payload, revision, updated_at AS updatedAt FROM app_state WHERE id = 1").first<{ payload: string; revision: number; updatedAt: string }>();
+  return json({ state: row ? JSON.parse(row.payload) : { conversations: [] }, revision: row?.revision ?? 0, updatedAt: row?.updatedAt });
+}
+
+async function putSharedState(request: Request, env: Env) {
+  if (!isAuthorized(request, env)) return json({ error: "未授權" }, 401);
+  const input = await request.json<{ conversations?: unknown[]; baseRevision?: number }>();
+  if (!Array.isArray(input.conversations) || typeof input.baseRevision !== "number") return json({ error: "同步資料格式錯誤" }, 400);
+  const result = await env.DB.prepare(
+    "UPDATE app_state SET payload = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = 1 AND revision = ?",
+  ).bind(JSON.stringify({ conversations: input.conversations }), input.baseRevision).run();
+  if (!result.meta.changes) {
+    const latest = await env.DB.prepare("SELECT payload, revision FROM app_state WHERE id = 1").first<{ payload: string; revision: number }>();
+    return json({ error: "資料已由另一台裝置更新", state: latest ? JSON.parse(latest.payload) : { conversations: [] }, revision: latest?.revision ?? 0 }, 409);
+  }
+  return json({ ok: true, revision: input.baseRevision + 1 });
+}
 
 async function openAiDraft(request: Request, env: Env) {
   const input = await request.json<{ message?: string; context?: string }>();
@@ -70,6 +108,9 @@ export default {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
     if (url.pathname === "/api/health") return json({ ok: true, service: "wodejia-line-console", aiConfigured: Boolean(env.OPENAI_API_KEY), lineConfigured: Boolean(env.LINE_CHANNEL_SECRET && env.LINE_CHANNEL_ACCESS_TOKEN) });
+    if (url.pathname === "/api/session/verify" && request.method === "POST") return verifySession(request, env);
+    if (url.pathname === "/api/sync/conversations" && request.method === "GET") return getSharedState(request, env);
+    if (url.pathname === "/api/sync/conversations" && request.method === "PUT") return putSharedState(request, env);
     if (url.pathname === "/api/ai/draft" && request.method === "POST") return openAiDraft(request, env);
     if (url.pathname === "/api/line/webhook" && request.method === "POST") return lineWebhook(request, env);
     if (url.pathname === "/api/line/rich-menu/publish" && request.method === "POST") return publishRichMenu(request, env);

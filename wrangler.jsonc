@@ -7,5 +7,12 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*"]
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "wodejia-line-console-db",
+      "database_id": "6304c894-6d2e-48a5-96ab-7c4a46f1c142"
+    }
+  ]
 }
