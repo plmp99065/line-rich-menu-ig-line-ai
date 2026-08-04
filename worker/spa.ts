@@ -283,24 +283,32 @@ async function trackRichMenuClick(request: Request, env: Env) {
 }
 
 async function openAiDraft(request: Request, env: Env) {
-  const input = await request.json<{ message?: string; context?: string }>();
+  const input = await request.json<{ message?: string; context?: string; style?: "brief" | "warm" | "confirm" | "handoff" }>();
   if (!input.message?.trim()) return json({ error: "訊息不能空白" }, 400);
+  const risky = /空房|名額|是否有房|生病|受傷|流血|用藥|緊急|不吃|退款|退費|客訴|爭議|申訴/.test(input.message);
+  const riskLabel = risky ? "此問題需要人工確認" : "可由 AI 協助草擬";
   const apiKey = await getCredential(env, "OPENAI_API_KEY");
-  if (!apiKey) return json({ draft: "您好，已收到您的訊息，我們會由客服人員確認後盡快回覆您。" });
+  if (!apiKey) return json({ draft: "您好，已收到您的訊息，我們會由客服人員確認後盡快回覆您。", requiresHuman: risky, riskLabel, sources: [] });
   const [settings, knowledge] = await Promise.all([
     readAiSettings(env),
     env.DB.prepare("SELECT title, content FROM knowledge_documents WHERE content <> '' ORDER BY updated_at DESC LIMIT 8").all<{ title: string; content: string }>(),
   ]);
   const knowledgeContext = knowledge.results.map(item => `${item.title}：${item.content.slice(0, 3000)}`).join("\n");
+  const styleInstruction = input.style === "brief" ? "用一句到兩句簡短回答" : input.style === "confirm" ? "先確認顧客資料，再列出下一步需要提供的資訊" : input.style === "handoff" ? "清楚告知已轉交人工客服，避免承諾完成時間" : "語氣親切自然，重點清楚";
+  const sources = knowledge.results.filter(item => {
+    const text = `${item.title}${item.content}`;
+    const keywords = input.message!.match(/住宿|價目|費用|接送|配送|商品|飼料|空房|預約|入住|退房|生病|受傷|退款/g) || [];
+    return keywords.some(keyword => text.includes(keyword));
+  }).slice(0, 3).map(item => item.title);
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: settings.model || env.OPENAI_MODEL || "gpt-5-mini", instructions: `你是窩的家客服助理。${settings.tone}。遇到以下情況需明確表示轉由人工確認：${settings.handoffRules.join("、")}。參考資料：${knowledgeContext || input.context || "無"}`, input: input.message, max_output_tokens: 220 }),
+    body: JSON.stringify({ model: settings.model || env.OPENAI_MODEL || "gpt-5-mini", instructions: `你是窩的家客服助理。${settings.tone}。${styleInstruction}。只能使用參考資料中確定的內容；沒有資料時直接說需要人工確認，不得自行猜測價格、空房、庫存、健康處置或退款結果。遇到以下情況需明確表示轉由人工確認：${settings.handoffRules.join("、")}。回覆控制在 120 個中文字內，先回答問題，再提出一個最必要的下一步。參考資料：${knowledgeContext || input.context || "無"}`, input: input.message, max_output_tokens: 220 }),
   });
   if (!response.ok) return json({ error: "AI 暫時無法產生草稿" }, 502);
   const result = await response.json() as { output_text?: string; output?: Array<{ content?: Array<{ text?: string }> }> };
   const draft = result.output_text || result.output?.flatMap(item => item.content || []).map(item => item.text || "").join("") || "請由人工客服確認。";
-  return json({ draft });
+  return json({ draft, requiresHuman: risky, riskLabel, sources });
 }
 
 async function verifyLine(body: string, signature: string | null, secret?: string) {

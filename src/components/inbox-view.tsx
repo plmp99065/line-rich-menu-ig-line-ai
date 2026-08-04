@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Check, CheckCircle2, ChevronDown, Clock3, Edit3, Info, MessageCircle, MoreHorizontal, Paperclip, Save, Search, Send, Sparkles, UserRound, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronDown, ChevronUp, Clock3, Edit3, Info, MessageCircle, MoreHorizontal, Paperclip, Plus, Save, Search, Send, Sparkles, UserRound, X } from "lucide-react";
 import { conversations as seed } from "@/lib/demo-data";
 import { apiUrl } from "@/lib/api";
 import type { Conversation, Message, Order } from "@/lib/types";
@@ -14,12 +14,16 @@ export function InboxView({ accessCode }: { accessCode: string }) {
   const [filter, setFilter] = useState("全部");
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState("您好～感謝提供資訊！此問題需要由人員確認，我先為您保留詢問紀錄，確認後會盡快回覆您。");
+  const [aiStyle, setAiStyle] = useState<"brief" | "warm" | "confirm" | "handoff">("warm");
+  const [aiMeta, setAiMeta] = useState<{ requiresHuman: boolean; riskLabel: string; sources: string[] }>({ requiresHuman: true, riskLabel: "此問題需要人工確認", sources: [] });
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendStatus, setSendStatus] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [mobileChatOpen, setMobileChatOpen] = useState(false);
+  const [aiExpanded, setAiExpanded] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [chatMenuOpen, setChatMenuOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
@@ -67,7 +71,7 @@ export function InboxView({ accessCode }: { accessCode: string }) {
   }
 
   function selectConversation(id: string) {
-    setSelectedId(id); setDetailsOpen(false); setAssignOpen(false); setChatMenuOpen(false);
+    setSelectedId(id); setDetailsOpen(false); setAssignOpen(false); setChatMenuOpen(false); setMobileChatOpen(true); setAiExpanded(false);
     setItems(old => { const current = old.find(item => item.id === id); if (!current?.unread) return old; const next = old.map(item => item.id === id ? { ...item, unread: 0 } : item); void persist(next); return next; });
   }
 
@@ -107,13 +111,14 @@ export function InboxView({ accessCode }: { accessCode: string }) {
     reader.readAsDataURL(file);
   }
 
-  async function regenerate() {
+  async function regenerate(style = aiStyle) {
     setLoading(true);
     try {
       const last = [...selected.messages].reverse().find(message => message.role === "customer")?.text || selected.preview;
-      const response = await fetch(apiUrl("/api/ai/draft"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: last }) });
-      const data = await response.json() as { draft?: string; error?: string };
-      if (data.draft) setDraft(data.draft); else setSendStatus(data.error || "AI 草稿產生失敗");
+      const response = await fetch(apiUrl("/api/ai/draft"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: last, style }) });
+      const data = await response.json() as { draft?: string; error?: string; requiresHuman?: boolean; riskLabel?: string; sources?: string[] };
+      if (data.draft) { setDraft(data.draft); setAiMeta({ requiresHuman: Boolean(data.requiresHuman), riskLabel: data.riskLabel || "AI 草稿已完成", sources: data.sources || [] }); }
+      else setSendStatus(data.error || "AI 草稿產生失敗");
     } finally { setLoading(false); }
   }
 
@@ -125,14 +130,23 @@ export function InboxView({ accessCode }: { accessCode: string }) {
     setOrderOpen(false); setSendStatus("預約訂單已建立並同步");
   }
 
-  return <main className="inbox-page">
+  return <main className={`inbox-page ${mobileChatOpen ? "mobile-chat-open" : "mobile-list-open"}`}>
     <div className="page-title-row"><div><h1>客服收件匣</h1><p>集中處理 LINE 顧客訊息與 AI 回覆草稿</p></div><div className="header-tools"><span className="mode"><i/> {syncing ? "同步中…" : "兩台已同步"}</span></div></div>
     <div className={`inbox-layout ${detailsOpen ? "details-open" : ""}`}>
       <section className="conversation-rail"><label className="search"><Search size={17}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜尋顧客或訊息"/></label><div className="filter-tabs">{["全部", "未讀", "待處理"].map(item => <button key={item} className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>{item}<span>{item === "全部" ? items.length : item === "未讀" ? items.filter(conversation => conversation.unread).length : items.filter(conversation => conversation.status !== "resolved").length}</span></button>)}</div><div className="conversation-list">{visible.map(conversation => <button key={conversation.id} className={conversation.id === selected.id ? "conversation selected" : "conversation"} onClick={() => selectConversation(conversation.id)}><div className="avatar">{conversation.avatar}</div><span><strong>{conversation.name}<time>{conversation.time}</time></strong><em>{conversation.preview}</em></span>{conversation.unread ? <b>{conversation.unread}</b> : null}</button>)}{visible.length === 0 ? <div className="conversation-empty">找不到符合條件的對話</div> : null}</div></section>
-      <section className="chat-panel"><header className="chat-header"><div className="avatar">{selected.avatar}</div><div><strong>{selected.name}</strong><span>LINE ID：{selected.lineId}</span></div><div className="header-action-wrap"><button className="text-btn" onClick={() => setAssignOpen(!assignOpen)}><UserRound size={16}/> {selected.assignee || "指派"}</button>{assignOpen ? <div className="action-menu">{["店長", "夥伴", "AI 協助"].map(name => <button key={name} onClick={() => { updateSelected(conversation => ({ ...conversation, assignee: name, status: name === "AI 協助" ? "ai" : "human" })); setAssignOpen(false); }}>{name}</button>)}</div> : null}</div><button className="icon-btn" aria-label="顧客資料" onClick={() => setDetailsOpen(!detailsOpen)}><Info size={18}/></button><div className="header-action-wrap"><button className="icon-btn" aria-label="對話操作" onClick={() => setChatMenuOpen(!chatMenuOpen)}><MoreHorizontal size={18}/></button>{chatMenuOpen ? <div className="action-menu right"><button onClick={() => { updateSelected(conversation => ({ ...conversation, status: conversation.status === "resolved" ? "human" : "resolved", unread: 0 })); setChatMenuOpen(false); }}><CheckCircle2 size={15}/>{selected.status === "resolved" ? "重新開啟" : "標示已結案"}</button><button onClick={() => { setDetailsOpen(true); setChatMenuOpen(false); }}><Info size={15}/>查看顧客資料</button></div> : null}</div></header>
+      <section className="chat-panel"><header className="chat-header"><button className="mobile-back" aria-label="返回對話列表" onClick={() => { setMobileChatOpen(false); setDetailsOpen(false); }}><ArrowLeft size={20}/></button><div className="avatar">{selected.avatar}</div><div><strong>{selected.name}</strong><span>{selected.status === "human" ? "人工處理" : selected.status === "resolved" ? "已結案" : "AI 協助中"}</span></div><div className="header-action-wrap"><button className="text-btn" onClick={() => setAssignOpen(!assignOpen)}><UserRound size={16}/> {selected.assignee || "指派"}</button>{assignOpen ? <div className="action-menu">{["店長", "夥伴", "AI 協助"].map(name => <button key={name} onClick={() => { updateSelected(conversation => ({ ...conversation, assignee: name, status: name === "AI 協助" ? "ai" : "human" })); setAssignOpen(false); }}>{name}</button>)}</div> : null}</div><button className="icon-btn" aria-label="顧客資料" onClick={() => setDetailsOpen(!detailsOpen)}><Info size={18}/></button><div className="header-action-wrap"><button className="icon-btn" aria-label="對話操作" onClick={() => setChatMenuOpen(!chatMenuOpen)}><MoreHorizontal size={18}/></button>{chatMenuOpen ? <div className="action-menu right"><button onClick={() => { updateSelected(conversation => ({ ...conversation, status: conversation.status === "resolved" ? "human" : "resolved", unread: 0 })); setChatMenuOpen(false); }}><CheckCircle2 size={15}/>{selected.status === "resolved" ? "重新開啟" : "標示已結案"}</button><button onClick={() => { setDetailsOpen(true); setChatMenuOpen(false); }}><Info size={15}/>查看顧客資料</button></div> : null}</div></header>
         <div className="messages"><div className="day-line">今天</div>{selected.messages.map(message => <div key={message.id} className={`message-row ${message.role}`}><div className="bubble">{message.imageUrl ? <img className="message-image" src={message.imageUrl} alt={message.attachmentName || "LINE 圖片"}/> : null}{message.text}</div><time>{message.time}</time></div>)}</div>
-        <div className="draft-box"><div className="draft-head"><span><Sparkles size={16}/> AI 草稿建議</span><label>草稿模式 <input type="checkbox" checked readOnly/></label></div><textarea value={draft} onChange={event => setDraft(event.target.value)} aria-label="AI 回覆草稿"/><div className="draft-actions"><button className="primary" onClick={() => void send(draft, "ai")} disabled={sending}><Send size={16}/>送出回覆</button><button onClick={() => void regenerate()} disabled={loading}><Sparkles size={16}/>{loading ? "產生中…" : "重新產生"}</button><button className="danger-soft" onClick={() => updateSelected(conversation => ({ ...conversation, status: "human", assignee: "店長" }))}><UserRound size={16}/>轉人工</button></div></div>
-        <div className="composer"><div className="quick-replies">{quickReplies.map(text => <button key={text} onClick={() => setInput(text)}>{text}</button>)}</div>{sendStatus ? <div className="send-status" role="status">{sendStatus}</div> : null}<div className="composer-tools"><button aria-label="附加圖片" onClick={() => imageRef.current?.click()} disabled={sending}><Paperclip size={18}/></button><input ref={imageRef} hidden type="file" accept="image/png,image/jpeg" onChange={event => void sendImage(event)}/><button aria-label="快速回覆" onClick={() => setQuickOpen(!quickOpen)}><MessageCircle size={18}/></button><button className="quick" onClick={() => setQuickOpen(!quickOpen)}>常用回覆 <ChevronDown size={14}/></button>{quickOpen ? <div className="quick-menu">{quickReplies.map(text => <button key={text} onClick={() => { setInput(text); setQuickOpen(false); }}>{text}</button>)}</div> : null}</div><div className="compose-row"><textarea aria-label="輸入訊息" placeholder="輸入訊息…（Enter 送出）" value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(input); } }}/><button onClick={() => void send(input)} disabled={sending || !input.trim()} aria-label="送出"><Send size={18}/></button></div></div>
+        <div className={`draft-box ${aiExpanded ? "expanded" : "collapsed"}`}>
+          <button className="draft-toggle" onClick={() => setAiExpanded(!aiExpanded)} aria-expanded={aiExpanded}><span><Sparkles size={16}/> AI 建議回覆</span><b className={aiMeta.requiresHuman ? "risk" : "safe"}>{aiExpanded ? "收合" : aiMeta.riskLabel}</b>{aiExpanded ? <ChevronDown size={17}/> : <ChevronUp size={17}/>}</button>
+          <div className="draft-content">
+            <div className="draft-head"><span>選擇回覆方式</span><label>草稿模式 <input type="checkbox" checked readOnly/></label></div>
+            <div className="ai-modes">{([['brief','簡短'],['warm','親切'],['confirm','確認資料'],['handoff','轉人工']] as const).map(([value, label]) => <button key={value} className={aiStyle === value ? "active" : ""} onClick={() => { setAiStyle(value); void regenerate(value); }}>{label}</button>)}</div>
+            <textarea value={draft} onChange={event => setDraft(event.target.value)} aria-label="AI 回覆草稿"/>
+            <div className={`ai-evidence ${aiMeta.requiresHuman ? "risk" : "safe"}`}><strong>{aiMeta.riskLabel}</strong><span>{aiMeta.sources.length ? `依據：${aiMeta.sources.join("、")}` : "尚無直接知識庫依據，送出前請人工確認。"}</span></div>
+            <div className="draft-actions"><button className="primary" onClick={() => void send(draft, "ai")} disabled={sending}><Send size={16}/>送出回覆</button><button onClick={() => void regenerate()} disabled={loading}><Sparkles size={16}/>{loading ? "產生中…" : "重新產生"}</button><button className="danger-soft" onClick={() => updateSelected(conversation => ({ ...conversation, status: "human", assignee: "店長" }))}><UserRound size={16}/>轉人工</button></div>
+          </div>
+        </div>
+        <div className="composer">{sendStatus ? <div className="send-status" role="status">{sendStatus}</div> : null}<div className="compose-row"><div className="composer-tools"><button className="composer-plus" aria-label="更多訊息工具" onClick={() => setQuickOpen(!quickOpen)}><Plus size={20}/></button><input ref={imageRef} hidden type="file" accept="image/png,image/jpeg" onChange={event => void sendImage(event)}/>{quickOpen ? <div className="quick-menu"><button onClick={() => { setQuickOpen(false); imageRef.current?.click(); }}><Paperclip size={17}/>傳送圖片</button>{quickReplies.map(text => <button key={text} onClick={() => { setInput(text); setQuickOpen(false); }}><MessageCircle size={16}/>{text}</button>)}</div> : null}</div><textarea aria-label="輸入訊息" placeholder="輸入訊息…" value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(input); } }}/><button className="send-button" onClick={() => void send(input)} disabled={sending || !input.trim()} aria-label="送出"><Send size={18}/></button></div></div>
       </section>
       <aside className={`customer-panel ${detailsOpen ? "open" : ""}`}><div className="customer-title"><h2>顧客資訊</h2><button aria-label="關閉顧客資訊" onClick={() => setDetailsOpen(false)}><X size={18}/></button></div><div className="customer-id"><div className="avatar big">{selected.avatar}</div><div>{editingName ? <input className="inline-input" aria-label="顧客名稱" value={selected.name} onChange={event => updateSelected(conversation => ({ ...conversation, name: event.target.value }))}/> : <strong>{selected.name}</strong>}<span>{selected.lineId}</span></div><button aria-label="編輯顧客名稱" onClick={() => setEditingName(!editingName)}>{editingName ? <Save size={16}/> : <Edit3 size={16}/>}</button></div><dl><div><dt>目前狀態</dt><dd className={selected.status}>{selected.status === "human" ? "人工處理" : selected.status === "resolved" ? "已結案" : "AI 協助"}</dd></div><div><dt>負責人員</dt><dd>{selected.assignee || "尚未指派"}</dd></div></dl>
         <section className="side-section"><header><h3>標籤</h3><button aria-label="編輯標籤" onClick={() => setEditingTags(!editingTags)}><Edit3 size={15}/></button></header><div className="tags">{selected.tags.map(tag => <button key={tag} title="點擊移除" onClick={() => editingTags && updateSelected(conversation => ({ ...conversation, tags: conversation.tags.filter(item => item !== tag) }))}>{tag}</button>)}</div>{editingTags ? <div className="inline-add"><input aria-label="新增標籤" value={tagInput} onChange={event => setTagInput(event.target.value)} placeholder="新增標籤"/><button onClick={() => { if (!tagInput.trim()) return; updateSelected(conversation => ({ ...conversation, tags: [...new Set([...conversation.tags, tagInput.trim()])] })); setTagInput(""); }}>新增</button></div> : null}</section>
