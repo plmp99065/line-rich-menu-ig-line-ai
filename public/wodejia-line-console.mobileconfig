@@ -12,11 +12,11 @@
       <key>IsRemovable</key>
       <true/>
       <key>Label</key>
-      <string>我de家客服</string>
+      <string>窩的家客服</string>
       <key>PayloadDescription</key>
-      <string>在主畫面加入我de家 LINE 客服管理後台。</string>
+      <string>在主畫面加入窩的家 LINE 客服管理後台。</string>
       <key>PayloadDisplayName</key>
-      <string>我de家客服</string>
+      <string>窩的家客服</string>
       <key>PayloadIdentifier</key>
       <string>tw.wodejia.line-console.webclip</string>
       <key>PayloadType</key>
@@ -32,13 +32,13 @@
     </dict>
   </array>
   <key>PayloadDescription</key>
-  <string>安裝我de家 LINE 客服管理後台的主畫面捷徑。不含 VPN、憑證、密碼或裝置管理權限。</string>
+  <string>安裝窩的家 LINE 客服管理後台的主畫面捷徑。不含 VPN、憑證、密碼或裝置管理權限。</string>
   <key>PayloadDisplayName</key>
-  <string>我de家客服</string>
+  <string>窩的家客服</string>
   <key>PayloadIdentifier</key>
   <string>tw.wodejia.line-console.profile</string>
   <key>PayloadOrganization</key>
-  <string>我de家</string>
+  <string>窩的家</string>
   <key>PayloadRemovalDisallowed</key>
   <false/>
   <key>PayloadType</key>

@@ -1,6 +1,6 @@
 {
-  "name": "我de家 LINE 客服管理後台",
-  "short_name": "我de家客服",
+  "name": "窩的家 LINE 客服管理後台",
+  "short_name": "窩的家客服",
   "start_url": "/line-rich-menu-ig-line-ai/",
   "scope": "/line-rich-menu-ig-line-ai/",
   "display": "standalone",
