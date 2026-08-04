@@ -1,0 +1,8 @@
+"use client";
+import { ArrowRight, Bot, CheckCircle2, Clock3, Inbox, MousePointerClick, UserRound } from "lucide-react";
+import type { NavKey } from "@/lib/types";
+
+export function Dashboard({ onNavigate }: { onNavigate: (key: NavKey) => void }) {
+  const stats = [{l:"今日新對話",v:"24",d:"較昨日 +12%",i:Inbox},{l:"AI 解決率",v:"72%",d:"本週平均",i:Bot},{l:"人工接手率",v:"18%",d:"下降 4%",i:UserRound},{l:"選單點擊",v:"386",d:"近 7 天",i:MousePointerClick}];
+  return <main className="content-page"><div className="page-title-row"><div><h1>營運總覽</h1><p>掌握今日 LINE 客服與圖文選單成效</p></div><span className="date-chip">2026 年 8 月 3 日</span></div><div className="stat-grid">{stats.map(s=><article key={s.l}><s.i size={22}/><span>{s.l}</span><strong>{s.v}</strong><em>{s.d}</em></article>)}</div><div className="dashboard-grid"><section className="activity-panel"><header><h2>待處理事項</h2><button onClick={()=>onNavigate("inbox")}>查看收件匣 <ArrowRight size={15}/></button></header>{[{t:"3 則對話等待人工處理",d:"包含 1 則健康問題",c:"urgent"},{t:"2 則預約需要確認房況",d:"最久等待 18 分鐘",c:"warning"},{t:"AI 知識庫索引已完成",d:"新增 4 份文件、47 個段落",c:"done"}].map(x=><div className="task-row" key={x.t}><i className={x.c}>{x.c==="done"?<CheckCircle2 size={18}/>:<Clock3 size={18}/>}</i><span><strong>{x.t}</strong><em>{x.d}</em></span><ArrowRight size={16}/></div>)}</section><section className="resolution-panel"><header><h2>近 7 日客服成效</h2><span>共 168 則對話</span></header><div className="donut" style={{"--value":"72%"} as React.CSSProperties}><strong>72%</strong><span>AI 解決</span></div><div className="legend"><span><i className="green"/>AI 自動處理 <b>121</b></span><span><i className="orange"/>人工接手 <b>30</b></span><span><i className="gray"/>待處理 <b>17</b></span></div></section></div></main>;
+}

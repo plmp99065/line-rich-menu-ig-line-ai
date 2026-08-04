@@ -1,0 +1,10 @@
+"use client";
+import { useRef, useState } from "react";
+import { Check, File, FileQuestion, MoreHorizontal, Search, Upload } from "lucide-react";
+import { knowledgeSeed } from "@/lib/demo-data";
+
+export function KnowledgeBase() {
+  const [docs,setDocs]=useState(knowledgeSeed); const [query,setQuery]=useState(""); const ref=useRef<HTMLInputElement>(null);
+  function add(files: FileList|null){if(!files)return;setDocs(old=>[...Array.from(files).map((f,i)=>({id:Date.now()+i,title:f.name,type:f.name.split(".").pop()?.toUpperCase()||"FILE",updated:"剛剛",status:"已索引",chunks:Math.max(1,Math.ceil(f.size/8000))})),...old])}
+  return <main className="content-page"><div className="page-title-row"><div><h1>知識庫管理</h1><p>上傳價目、住宿須知與常見問題，提供 AI 查詢依據</p></div><button className="primary big" onClick={()=>ref.current?.click()}><Upload size={18}/>上傳文件</button><input ref={ref} hidden type="file" multiple accept=".pdf,.doc,.docx,.txt,.md" onChange={e=>add(e.target.files)}/></div><div className="knowledge-layout"><section><div className="table-tools"><label className="search"><Search size={17}/><input placeholder="搜尋知識文件" value={query} onChange={e=>setQuery(e.target.value)}/></label><select><option>全部類型</option><option>PDF</option><option>FAQ</option></select></div><div className="doc-table"><header><span>文件名稱</span><span>類型</span><span>段落</span><span>更新時間</span><span>狀態</span><span/></header>{docs.filter(d=>d.title.includes(query)).map(d=><div key={d.id}><span className="doc-name"><File size={18}/><strong>{d.title}</strong></span><span>{d.type}</span><span>{d.chunks}</span><span>{d.updated}</span><span className="indexed"><Check size={14}/>{d.status}</span><button><MoreHorizontal size={17}/></button></div>)}</div></section><aside className="kb-guide"><FileQuestion size={28}/><h2>什麼適合放進知識庫？</h2><p>內容越明確，AI 回覆越穩定。請避免上傳過期或互相矛盾的資料。</p><ul><li>住宿價目與加價規則</li><li>入住、退房與接送方式</li><li>商品庫存與配送政策</li><li>常見問題與標準回答</li></ul><div><strong>安全規則已啟用</strong><span>健康、空房、退款與爭議問題一律轉人工。</span></div></aside></div></main>;
+}

@@ -1,0 +1,10 @@
+.hotspot {
+  appearance: none;
+  background-color: transparent;
+}
+
+.draft-actions button.primary {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+}
