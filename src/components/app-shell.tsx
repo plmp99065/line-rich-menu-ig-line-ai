@@ -82,7 +82,7 @@ export function AppShell() {
     if (active === "knowledge") return <KnowledgeBase />;
     if (active === "analytics") return <Analytics />;
     if (active === "ai") return <AiSettings />;
-    return <SystemSettings />;
+    return <SystemSettings accessCode={accessCode} />;
   };
 
   return <div className="app-shell">
