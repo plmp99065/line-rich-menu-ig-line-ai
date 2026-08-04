@@ -93,7 +93,7 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
     });
     const data = await response.json() as { ok?: boolean; error?: string };
     if (!response.ok || !data.ok) throw new Error(data.error || "回覆設定儲存失敗");
-    if (showNotice) setNotice(`按鈕 ${selected} 的自動回覆設定已儲存`);
+    if (showNotice) setNotice(`按鈕 ${selected} 的動作與回覆設定已儲存`);
   }
 
   async function saveCurrent() {
@@ -157,7 +157,7 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
         <hr/>
         <label>動作類型<select value={current.type} onChange={event => update({ type: event.target.value as RichAction["type"] })}><option value="uri">開啟網址</option><option value="message">傳送文字</option><option value="richmenuswitch">切換頁面</option></select></label>
         <label>按鈕名稱<input value={current.label} onChange={event => update({ label: event.target.value })}/></label>
-        <fieldset><legend>目標設定</legend>{[{ v: "uri", l: "開啟網址", i: Link2 }, { v: "message", l: "傳送文字", i: MessageSquareText }, { v: "richmenuswitch", l: "切換頁面", i: Grid3X3 }].map(item => <label key={item.v} className="radio-line"><input type="radio" checked={current.type === item.v} onChange={() => update({ type: item.v as RichAction["type"] })}/><item.i size={16}/>{item.l}</label>)}<input className="target-input" value={current.value} onChange={event => update({ value: event.target.value })}/></fieldset>
+        <fieldset><legend>目標設定</legend>{[{ v: "uri", l: "開啟網址", i: Link2 }, { v: "message", l: "傳送文字", i: MessageSquareText }, { v: "richmenuswitch", l: "切換頁面", i: Grid3X3 }].map(item => <label key={item.v} className="radio-line"><input type="radio" checked={current.type === item.v} onChange={() => update({ type: item.v as RichAction["type"] })}/><item.i size={16}/>{item.l}</label>)}<input className="target-input" type={current.type === "uri" ? "url" : "text"} inputMode={current.type === "uri" ? "url" : "text"} placeholder={current.type === "uri" ? "https://完整網址" : "顧客點擊後傳送的文字"} value={current.value} onChange={event => update({ value: event.target.value })}/>{current.type === "uri" ? <small>網址必須包含 https://；儲存後才會保留，重新發佈才會套用到 LINE。</small> : null}</fieldset>
         <section className={`reply-config ${current.type !== "message" ? "disabled" : ""}`}>
           <header><ImageIcon size={18}/><div><strong>點擊後自動回覆</strong><span>可單獨回圖片，或圖片與文字一起傳送</span></div></header>
           {current.type === "message" ? <>

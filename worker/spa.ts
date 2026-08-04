@@ -253,14 +253,60 @@ async function sendLineMessage(request: Request, env: Env) {
 type ReplyMode = "text" | "image" | "text_image";
 type RichActionInput = { id: number; label: string; type: "uri" | "message" | "richmenuswitch"; value: string; responseMode?: ReplyMode; replyText?: string; replyImageData?: string; replyImageName?: string };
 
+function validateRichAction(action: RichActionInput) {
+  if (!action.label.trim()) return `按鈕 ${action.id} 缺少名稱`;
+  if (!action.value.trim()) return `按鈕 ${action.id} 缺少目標設定`;
+  if (action.type === "uri") {
+    try {
+      const url = new URL(action.value.trim());
+      if (!["https:", "http:", "tel:", "mailto:", "line:"].includes(url.protocol)) return `按鈕 ${action.id} 的連結格式不支援`;
+    } catch {
+      return `按鈕 ${action.id} 請輸入完整網址，例如 https://example.com`;
+    }
+  }
+  return null;
+}
+
+async function getPublishedRichMenuActions(env: Env, page: "home" | "service") {
+  if (!(await credentialStatus(env, "LINE_CHANNEL_ACCESS_TOKEN"))) return [];
+  const aliasId = `wodejia-${page}`;
+  const aliasResponse = await lineApi(env, `/v2/bot/richmenu/alias/${aliasId}`, { method: "GET" });
+  if (!aliasResponse.ok) return [];
+  const alias = await aliasResponse.json() as { richMenuId?: string };
+  if (!alias.richMenuId) return [];
+  const menuResponse = await lineApi(env, `/v2/bot/richmenu/${alias.richMenuId}`, { method: "GET" });
+  if (!menuResponse.ok) return [];
+  const menu = await menuResponse.json() as { areas?: Array<{ action?: { type?: string; label?: string; uri?: string; text?: string; richMenuAliasId?: string } }> };
+  return (menu.areas || []).slice(0, 6).map((area, index) => {
+    const action = area.action || {};
+    const type = action.type === "uri" || action.type === "richmenuswitch" ? action.type : "message";
+    return {
+      id: index + 1,
+      label: action.label || `按鈕 ${index + 1}`,
+      type,
+      value: type === "uri" ? action.uri || "" : type === "richmenuswitch" ? action.richMenuAliasId || "" : action.text || "",
+    };
+  });
+}
+
 async function getRichMenuResponses(request: Request, env: Env) {
   if (!isAuthorized(request, env)) return json({ error: "未授權" }, 401);
   const page = new URL(request.url).searchParams.get("page");
   if (page !== "home" && page !== "service") return json({ error: "頁面不正確" }, 400);
-  const rows = await env.DB.prepare("SELECT action_id AS id, response_mode AS responseMode, reply_text AS replyText, image_name AS replyImageName, image_version AS imageVersion, CASE WHEN image_base64 IS NULL THEN 0 ELSE 1 END AS hasImage FROM rich_menu_responses WHERE page = ? ORDER BY action_id")
-    .bind(page).all<{ id: number; responseMode: ReplyMode; replyText: string; replyImageName?: string; imageVersion: number; hasImage: number }>();
+  const rows = await env.DB.prepare("SELECT action_id AS id, action_label AS label, action_type AS type, action_value AS value, response_mode AS responseMode, reply_text AS replyText, image_name AS replyImageName, image_version AS imageVersion, CASE WHEN image_base64 IS NULL THEN 0 ELSE 1 END AS hasImage FROM rich_menu_responses WHERE page = ? ORDER BY action_id")
+    .bind(page).all<{ id: number; label?: string; type?: RichActionInput["type"]; value?: string; responseMode: ReplyMode; replyText: string; replyImageName?: string; imageVersion: number; hasImage: number }>();
+  const published = await getPublishedRichMenuActions(env, page);
   const origin = new URL(request.url).origin;
-  return json({ ok: true, actions: rows.results.map(row => ({ ...row, replyImageUrl: row.hasImage ? `${origin}/api/public/reply-image/${page}/${row.id}?v=${row.imageVersion}` : undefined })) });
+  return json({ ok: true, actions: rows.results.map(row => {
+    const liveAction = published.find(action => action.id === row.id);
+    return {
+      ...row,
+      label: row.label || liveAction?.label,
+      type: row.type || liveAction?.type,
+      value: row.value || liveAction?.value,
+      replyImageUrl: row.hasImage ? `${origin}/api/public/reply-image/${page}/${row.id}?v=${row.imageVersion}` : undefined,
+    };
+  }) });
 }
 
 async function saveRichMenuResponses(request: Request, env: Env) {
@@ -269,6 +315,8 @@ async function saveRichMenuResponses(request: Request, env: Env) {
   if (!input.page || !Array.isArray(input.actions) || input.actions.length !== 6) return json({ error: "需要完整設定六個選項" }, 400);
   for (const action of input.actions) {
     if (!Number.isInteger(action.id) || action.id < 1 || action.id > 6) return json({ error: "按鈕編號不正確" }, 400);
+    const actionError = validateRichAction(action);
+    if (actionError) return json({ error: actionError }, 400);
     const isMessageAction = action.type === "message";
     const mode: ReplyMode = isMessageAction && ["image", "text_image"].includes(action.responseMode || "") ? action.responseMode! : "text";
     const existing = await env.DB.prepare("SELECT image_base64 AS imageBase64, image_mime AS imageMime, image_name AS imageName, image_version AS imageVersion FROM rich_menu_responses WHERE page = ? AND action_id = ?")
@@ -286,8 +334,8 @@ async function saveRichMenuResponses(request: Request, env: Env) {
     if (isMessageAction && (mode === "image" || mode === "text_image") && !imageBase64) return json({ error: `按鈕 ${action.id} 請先上傳回覆圖片` }, 400);
     const triggerText = (isMessageAction ? action.value : `__disabled__${input.page}_${action.id}`).trim().slice(0, 300);
     if (!triggerText) return json({ error: `按鈕 ${action.id} 缺少觸發文字` }, 400);
-    await env.DB.prepare("INSERT INTO rich_menu_responses (page, action_id, trigger_text, response_mode, reply_text, image_base64, image_mime, image_name, image_version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(page, action_id) DO UPDATE SET trigger_text = excluded.trigger_text, response_mode = excluded.response_mode, reply_text = excluded.reply_text, image_base64 = excluded.image_base64, image_mime = excluded.image_mime, image_name = excluded.image_name, image_version = excluded.image_version, updated_at = CURRENT_TIMESTAMP")
-      .bind(input.page, action.id, triggerText, mode, (action.replyText || "").trim().slice(0, 1000), imageBase64, imageMime, imageName, imageVersion).run();
+    await env.DB.prepare("INSERT INTO rich_menu_responses (page, action_id, action_label, action_type, action_value, trigger_text, response_mode, reply_text, image_base64, image_mime, image_name, image_version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(page, action_id) DO UPDATE SET action_label = excluded.action_label, action_type = excluded.action_type, action_value = excluded.action_value, trigger_text = excluded.trigger_text, response_mode = excluded.response_mode, reply_text = excluded.reply_text, image_base64 = excluded.image_base64, image_mime = excluded.image_mime, image_name = excluded.image_name, image_version = excluded.image_version, updated_at = CURRENT_TIMESTAMP")
+      .bind(input.page, action.id, action.label.trim().slice(0, 20), action.type, action.value.trim().slice(0, 1000), triggerText, mode, (action.replyText || "").trim().slice(0, 1000), imageBase64, imageMime, imageName, imageVersion).run();
   }
   return json({ ok: true });
 }
@@ -300,15 +348,21 @@ async function serveReplyImage(request: Request, env: Env, page: string, actionI
 }
 
 function toLineAction(action: RichActionInput) {
-  if (action.type === "uri") return { type: "uri", label: action.label.slice(0, 20), uri: action.value };
-  if (action.type === "richmenuswitch") return { type: "richmenuswitch", label: action.label.slice(0, 20), richMenuAliasId: action.value, data: `switch=${action.value}` };
-  return { type: "message", label: action.label.slice(0, 20), text: action.value };
+  const label = action.label.trim().slice(0, 20);
+  const value = action.value.trim();
+  if (action.type === "uri") return { type: "uri", label, uri: value };
+  if (action.type === "richmenuswitch") return { type: "richmenuswitch", label, richMenuAliasId: value, data: `switch=${value}` };
+  return { type: "message", label, text: value };
 }
 
 async function publishRichMenu(request: Request, env: Env) {
   if (!isAuthorized(request, env)) return json({ error: "未授權" }, 401);
   const input = await request.json<{ page?: "home" | "service"; actions?: RichActionInput[]; height?: number; layout?: "3x2" | "2x3"; tabPercent?: number; tabLabels?: [string, string]; chatBarText?: string; imageData?: string }>();
   if (!input.page || !Array.isArray(input.actions) || input.actions.length !== 6) return json({ error: "需要完整設定六個選項" }, 400);
+  for (const action of input.actions) {
+    const actionError = validateRichAction(action);
+    if (actionError) return json({ error: actionError }, 400);
+  }
   if (!(await credentialStatus(env, "LINE_CHANNEL_ACCESS_TOKEN"))) return json({ ok: true, result: { demo: true, reason: "尚未設定 LINE Access Token" } });
   const height = input.imageData ? Math.max(500, Math.min(1724, Number(input.height) || 1686)) : 1686;
   const [columns, rows] = input.layout === "2x3" ? [2, 3] : [3, 2];

@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS integration_secrets (
 CREATE TABLE IF NOT EXISTS rich_menu_responses (
   page TEXT NOT NULL,
   action_id INTEGER NOT NULL,
+  action_label TEXT,
+  action_type TEXT,
+  action_value TEXT,
   trigger_text TEXT NOT NULL,
   response_mode TEXT NOT NULL DEFAULT 'text',
   reply_text TEXT,
