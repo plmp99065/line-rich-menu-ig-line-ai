@@ -13,8 +13,10 @@
   },
   "dependencies": {
     "lucide-react": "latest",
+    "mammoth": "^1.12.0",
     "next": "latest",
     "openai": "latest",
+    "pdfjs-dist": "^6.2.108",
     "react": "latest",
     "react-dom": "latest",
     "zod": "latest"
@@ -22,12 +24,12 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",
     "@cloudflare/workers-types": "latest",
-    "@vitejs/plugin-react": "6.0.2",
-    "@vitejs/plugin-rsc": "0.5.26",
-    "cross-env": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "6.0.2",
+    "@vitejs/plugin-rsc": "0.5.26",
+    "cross-env": "latest",
     "eslint": "latest",
     "eslint-config-next": "latest",
     "react-server-dom-webpack": "19.2.6",

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Bot, Check, Clipboard, KeyRound, LoaderCircle, Save, ShieldCheck, Sparkles, Webhook } from "lucide-react";
 import { apiUrl } from "@/lib/api";
+import type { AppSettings } from "@/lib/types";
 
 type CredentialName = "OPENAI_API_KEY" | "LINE_CHANNEL_SECRET" | "LINE_CHANNEL_ACCESS_TOKEN";
 type IntegrationStatus = { configured: Record<CredentialName, boolean>; webhookUrl: string };
@@ -14,9 +15,24 @@ function CredentialField({ label, value, configured, placeholder, onChange }: { 
   return <label className="credential-field"><span><strong>{label}</strong><em className={configured ? "connected" : "pending"}>{configured ? "已安全設定" : "尚未設定"}</em></span><input type="password" value={value} onChange={event => onChange(event.target.value)} placeholder={configured ? "輸入新值可覆蓋目前設定" : placeholder} autoComplete="new-password" spellCheck={false}/></label>;
 }
 
-export function AiSettings() {
-  const [auto, setAuto] = useState(false);
-  return <main className="content-page settings-page"><div className="page-title-row"><div><h1>AI 客服設定</h1><p>調整回答模式、轉人工規則與安全界線</p></div><span className="saved"><Check size={15}/>設定已儲存</span></div><section className="settings-card"><header><Bot/><div><h2>回覆模式</h2><p>建議上線初期先使用草稿模式</p></div></header><label className="setting-row"><span><strong>AI 自動回覆</strong><em>關閉時僅產生草稿，由人員確認後送出</em></span><input type="checkbox" checked={auto} onChange={event => setAuto(event.target.checked)}/></label><label className="field">使用模型<select><option>gpt-5-mini（建議）</option><option>gpt-5.1</option></select></label><label className="field">客服語氣<textarea defaultValue="使用繁體中文，親切、精準、避免過度承諾；回答控制在 120 字內。"/></label></section><section className="settings-card"><header><ShieldCheck/><div><h2>強制轉人工規則</h2><p>符合以下內容時停止 AI 自動回覆</p></div></header>{["空房、即時名額或預約確認", "倉鼠生病、受傷或緊急狀況", "退款、客訴或消費爭議", "AI 信心不足或知識庫無答案"].map(item => <label className="check-row" key={item}><input type="checkbox" defaultChecked/>{item}</label>)}</section></main>;
+const defaultRules = ["空房、即時名額或預約確認", "倉鼠生病、受傷或緊急狀況", "退款、客訴或消費爭議", "AI 信心不足或知識庫無答案"];
+
+export function AiSettings({ accessCode }: { accessCode: string }) {
+  const [settings, setSettings] = useState<AppSettings>({ autoReply: false, model: "gpt-5-mini", tone: "使用繁體中文，親切、精準、避免過度承諾；回答控制在 120 字內。", handoffRules: defaultRules });
+  const [state, setState] = useState<"loading" | "saved" | "saving" | "error">("loading");
+  useEffect(() => { let active = true; void fetch(apiUrl("/api/settings/ai"), { headers: { "X-Admin-Code": accessCode } }).then(async response => response.json() as Promise<{ settings?: AppSettings }>).then(data => { if (active && data.settings) setSettings(data.settings); }).then(() => { if (active) setState("saved"); }).catch(() => setState("error")); return () => { active = false; }; }, [accessCode]);
+  async function save(next = settings) {
+    setState("saving");
+    const response = await fetch(apiUrl("/api/settings/ai"), { method: "PUT", headers: { "Content-Type": "application/json", "X-Admin-Code": accessCode }, body: JSON.stringify(next) });
+    setState(response.ok ? "saved" : "error");
+  }
+  function update(patch: Partial<AppSettings>) { setSettings(old => ({ ...old, ...patch })); setState("saved"); }
+  function toggleRule(rule: string, enabled: boolean) { const handoffRules = enabled ? [...new Set([...settings.handoffRules, rule])] : settings.handoffRules.filter(item => item !== rule); update({ handoffRules }); }
+  return <main className="content-page settings-page"><div className="page-title-row"><div><h1>AI 客服設定</h1><p>設定會同步到 Webhook 與客服草稿</p></div><button className="primary ai-save" onClick={() => void save()} disabled={state === "saving"}><Save size={15}/>{state === "saving" ? "儲存中…" : "儲存 AI 設定"}</button></div>
+    <div className={`settings-notice settings-state ${state}`} role="status">{state === "loading" ? "正在讀取設定…" : state === "saving" ? "正在同步兩台裝置…" : state === "error" ? "設定儲存失敗，請稍後重試" : <><Check size={14}/>設定已同步</>}</div>
+    <section className="settings-card"><header><Bot/><div><h2>回覆模式</h2><p>開啟自動回覆後，非固定選單問題會由 AI 直接回覆</p></div></header><label className="setting-row"><span><strong>AI 自動回覆</strong><em>高風險問題仍會依下方規則轉人工</em></span><input type="checkbox" checked={settings.autoReply} onChange={event => update({ autoReply: event.target.checked })}/></label><label className="field">使用模型<select value={settings.model} onChange={event => update({ model: event.target.value })}><option value="gpt-5-mini">gpt-5-mini（建議）</option><option value="gpt-5.1">gpt-5.1</option></select></label><label className="field">客服語氣<textarea value={settings.tone} onChange={event => update({ tone: event.target.value })}/></label></section>
+    <section className="settings-card"><header><ShieldCheck/><div><h2>強制轉人工規則</h2><p>符合以下內容時停止 AI 自動回覆</p></div></header>{defaultRules.map(item => <label className="check-row" key={item}><input type="checkbox" checked={settings.handoffRules.includes(item)} onChange={event => toggleRule(item, event.target.checked)}/>{item}</label>)}</section>
+  </main>;
 }
 
 export function SystemSettings({ accessCode }: { accessCode: string }) {

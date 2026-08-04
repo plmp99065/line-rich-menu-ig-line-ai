@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { BarChart3, BookOpen, Bot, Grid2X2, House, Inbox, Menu, Settings, Sparkles } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type { NavKey } from "@/lib/types";
 import { apiUrl } from "@/lib/api";
 import { Dashboard } from "./dashboard";
@@ -10,18 +11,19 @@ import { RichMenuEditor } from "./rich-menu-editor";
 import { KnowledgeBase } from "./knowledge-base";
 import { Analytics } from "./analytics";
 import { AiSettings, SystemSettings } from "./settings-views";
+import type { Metrics } from "@/lib/types";
 
-const nav = [
+type NavItem = { id: NavKey; label: string; icon: LucideIcon; count?: number };
+
+const navBase: NavItem[] = [
   { id: "dashboard" as const, label: "總覽", icon: House },
-  { id: "inbox" as const, label: "客服", icon: Inbox, count: 3 },
+  { id: "inbox" as const, label: "客服", icon: Inbox },
   { id: "richMenu" as const, label: "選單", icon: Grid2X2 },
   { id: "knowledge" as const, label: "知識庫", icon: BookOpen },
   { id: "ai" as const, label: "AI 設定", icon: Bot },
   { id: "analytics" as const, label: "數據", icon: BarChart3 },
   { id: "settings" as const, label: "設定", icon: Settings },
 ];
-
-const mobileNav = nav.filter(item => ["dashboard", "inbox", "richMenu", "settings"].includes(item.id));
 
 export function AppShell() {
   const [active, setActive] = useState<NavKey>("inbox");
@@ -31,15 +33,33 @@ export function AppShell() {
   const [checking, setChecking] = useState(true);
   const [loginError, setLoginError] = useState("");
   const [deviceName, setDeviceName] = useState("");
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
-    const savedCode = localStorage.getItem("wodejia-admin-code") || "";
-    const savedName = localStorage.getItem("wodejia-device-name") || `iPhone ${Math.floor(Math.random() * 90 + 10)}`;
-    setAccessCode(savedCode);
-    setDeviceName(savedName);
-    if (!savedCode) return setChecking(false);
-    void verify(savedCode, savedName, false);
+    const timer = window.setTimeout(() => {
+      const savedCode = localStorage.getItem("wodejia-admin-code") || "";
+      const savedName = localStorage.getItem("wodejia-device-name") || `iPhone ${Math.floor(Math.random() * 90 + 10)}`;
+      setAccessCode(savedCode);
+      setDeviceName(savedName);
+      if (!savedCode) setChecking(false);
+      else void verify(savedCode, savedName, false);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    let active = true;
+    async function loadMetrics() {
+      const response = await fetch(apiUrl("/api/metrics"), { headers: { "X-Admin-Code": accessCode } }).catch(() => null);
+      if (!response?.ok) return;
+      const data = await response.json() as { metrics?: Metrics };
+      if (active) setUnreadCount(data.metrics?.unread || 0);
+    }
+    void loadMetrics();
+    const timer = window.setInterval(loadMetrics, 10000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [accessCode, authenticated]);
 
   async function verify(code: string, name: string, remember = true) {
     setChecking(true);
@@ -76,14 +96,17 @@ export function AppShell() {
   }
 
   const render = () => {
-    if (active === "dashboard") return <Dashboard onNavigate={setActive} />;
+    if (active === "dashboard") return <Dashboard accessCode={accessCode} onNavigate={setActive} />;
     if (active === "inbox") return <InboxView accessCode={accessCode} />;
     if (active === "richMenu") return <RichMenuEditor accessCode={accessCode} />;
-    if (active === "knowledge") return <KnowledgeBase />;
-    if (active === "analytics") return <Analytics />;
-    if (active === "ai") return <AiSettings />;
+    if (active === "knowledge") return <KnowledgeBase accessCode={accessCode} />;
+    if (active === "analytics") return <Analytics accessCode={accessCode} />;
+    if (active === "ai") return <AiSettings accessCode={accessCode} />;
     return <SystemSettings accessCode={accessCode} />;
   };
+
+  const nav: NavItem[] = navBase.map(item => item.id === "inbox" ? { ...item, count: unreadCount } : item);
+  const mobileNav = nav.filter(item => ["dashboard", "inbox", "richMenu", "settings"].includes(item.id));
 
   return <div className="app-shell">
     <aside className={`sidebar ${mobileOpen ? "open" : ""}`}>

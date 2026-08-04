@@ -1,8 +1,40 @@
 "use client";
-import { ArrowRight, Bot, CheckCircle2, Clock3, Inbox, MousePointerClick, UserRound } from "lucide-react";
-import type { NavKey } from "@/lib/types";
 
-export function Dashboard({ onNavigate }: { onNavigate: (key: NavKey) => void }) {
-  const stats = [{l:"今日新對話",v:"24",d:"較昨日 +12%",i:Inbox},{l:"AI 解決率",v:"72%",d:"本週平均",i:Bot},{l:"人工接手率",v:"18%",d:"下降 4%",i:UserRound},{l:"選單點擊",v:"386",d:"近 7 天",i:MousePointerClick}];
-  return <main className="content-page"><div className="page-title-row"><div><h1>營運總覽</h1><p>掌握今日 LINE 客服與圖文選單成效</p></div><span className="date-chip">2026 年 8 月 3 日</span></div><div className="stat-grid">{stats.map(s=><article key={s.l}><s.i size={22}/><span>{s.l}</span><strong>{s.v}</strong><em>{s.d}</em></article>)}</div><div className="dashboard-grid"><section className="activity-panel"><header><h2>待處理事項</h2><button onClick={()=>onNavigate("inbox")}>查看收件匣 <ArrowRight size={15}/></button></header>{[{t:"3 則對話等待人工處理",d:"包含 1 則健康問題",c:"urgent"},{t:"2 則預約需要確認房況",d:"最久等待 18 分鐘",c:"warning"},{t:"AI 知識庫索引已完成",d:"新增 4 份文件、47 個段落",c:"done"}].map(x=><div className="task-row" key={x.t}><i className={x.c}>{x.c==="done"?<CheckCircle2 size={18}/>:<Clock3 size={18}/>}</i><span><strong>{x.t}</strong><em>{x.d}</em></span><ArrowRight size={16}/></div>)}</section><section className="resolution-panel"><header><h2>近 7 日客服成效</h2><span>共 168 則對話</span></header><div className="donut" style={{"--value":"72%"} as React.CSSProperties}><strong>72%</strong><span>AI 解決</span></div><div className="legend"><span><i className="green"/>AI 自動處理 <b>121</b></span><span><i className="orange"/>人工接手 <b>30</b></span><span><i className="gray"/>待處理 <b>17</b></span></div></section></div></main>;
+import { useEffect, useState } from "react";
+import { ArrowRight, Bot, CheckCircle2, Clock3, Inbox, MousePointerClick, UserRound } from "lucide-react";
+import { apiUrl } from "@/lib/api";
+import type { Metrics, NavKey } from "@/lib/types";
+
+const emptyMetrics: Metrics = { conversations: 0, unread: 0, pending: 0, aiResolved: 0, human: 0, resolved: 0, menuClicks: 0, knowledgeDocuments: 0, topics: [], daily: [] };
+
+export function Dashboard({ accessCode, onNavigate }: { accessCode: string; onNavigate: (key: NavKey) => void }) {
+  const [metrics, setMetrics] = useState(emptyMetrics);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let active = true;
+    void fetch(apiUrl("/api/metrics"), { headers: { "X-Admin-Code": accessCode } }).then(async response => response.json() as Promise<{ metrics?: Metrics }>).then(data => { if (active && data.metrics) setMetrics(data.metrics); }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [accessCode]);
+  const totalHandled = Math.max(1, metrics.aiResolved + metrics.human + metrics.resolved);
+  const aiRate = Math.round(metrics.aiResolved / totalHandled * 100);
+  const humanRate = Math.round(metrics.human / totalHandled * 100);
+  const stats = [
+    { l: "目前對話", v: metrics.conversations, d: `${metrics.unread} 則未讀訊息`, i: Inbox },
+    { l: "AI 處理率", v: `${aiRate}%`, d: `${metrics.aiResolved} 則 AI 協助`, i: Bot },
+    { l: "人工接手率", v: `${humanRate}%`, d: `${metrics.human} 則人工處理`, i: UserRound },
+    { l: "選單點擊", v: metrics.menuClicks, d: "近 7 天實際點擊", i: MousePointerClick },
+  ];
+  const date = new Intl.DateTimeFormat("zh-TW", { dateStyle: "long", timeZone: "Asia/Taipei" }).format(new Date());
+  return <main className="content-page">
+    <div className="page-title-row"><div><h1>營運總覽</h1><p>掌握目前 LINE 客服與圖文選單成效</p></div><span className="date-chip">{date}</span></div>
+    <div className="stat-grid" aria-busy={loading}>{stats.map(item => <article key={item.l} className={loading ? "skeleton-card" : ""}><item.i size={22}/><span>{item.l}</span><strong>{loading ? "—" : item.v}</strong><em>{loading ? "正在更新" : item.d}</em></article>)}</div>
+    <div className="dashboard-grid">
+      <section className="activity-panel"><header><h2>待處理事項</h2><button onClick={() => onNavigate("inbox")}>查看收件匣 <ArrowRight size={15}/></button></header>
+        <button className="task-row task-button" onClick={() => onNavigate("inbox")}><i className="urgent"><Clock3 size={18}/></i><span><strong>{metrics.pending} 則對話等待處理</strong><em>包含 {metrics.unread} 則未讀訊息</em></span><ArrowRight size={16}/></button>
+        <button className="task-row task-button" onClick={() => onNavigate("knowledge")}><i className="done"><CheckCircle2 size={18}/></i><span><strong>知識庫目前有 {metrics.knowledgeDocuments} 份文件</strong><em>可隨時新增、搜尋或刪除</em></span><ArrowRight size={16}/></button>
+        <button className="task-row task-button" onClick={() => onNavigate("richMenu")}><i className="warning"><MousePointerClick size={18}/></i><span><strong>圖文選單近 7 天點擊 {metrics.menuClicks} 次</strong><em>開啟選單可修改連結與回覆</em></span><ArrowRight size={16}/></button>
+      </section>
+      <section className="resolution-panel"><header><h2>目前客服狀態</h2><span>共 {metrics.conversations} 則對話</span></header><div className="donut" style={{ "--value": `${aiRate}%` } as React.CSSProperties}><strong>{aiRate}%</strong><span>AI 處理</span></div><div className="legend"><span><i className="green"/>AI 協助 <b>{metrics.aiResolved}</b></span><span><i className="orange"/>人工接手 <b>{metrics.human}</b></span><span><i className="gray"/>已結案 <b>{metrics.resolved}</b></span></div></section>
+    </div>
+  </main>;
 }

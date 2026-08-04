@@ -5,7 +5,11 @@ export type Message = {
   role: "customer" | "agent" | "ai";
   text: string;
   time: string;
+  imageUrl?: string;
+  attachmentName?: string;
 };
+
+export type Order = { id: string; title: string; date: string; amount: number; status: "待確認" | "已確認" | "已完成" };
 
 export type Conversation = {
   id: string;
@@ -20,6 +24,25 @@ export type Conversation = {
   tags: string[];
   messages: Message[];
   note?: string;
+  assignee?: string;
+  orders?: Order[];
+};
+
+export type KnowledgeDocument = { id: string; title: string; type: string; sizeBytes: number; content?: string; chunks: number; status: string; updated: string };
+
+export type AppSettings = { autoReply: boolean; model: string; tone: string; handoffRules: string[] };
+
+export type Metrics = {
+  conversations: number;
+  unread: number;
+  pending: number;
+  aiResolved: number;
+  human: number;
+  resolved: number;
+  menuClicks: number;
+  knowledgeDocuments: number;
+  topics: Array<{ label: string; count: number }>;
+  daily: Array<{ label: string; conversations: number }>;
 };
 
 export type RichAction = {
