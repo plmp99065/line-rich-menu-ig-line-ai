@@ -79,6 +79,14 @@ async function lineApi(env: Env, path: string, init: RequestInit = {}) {
   return fetch(`https://api.line.me${path}`, { ...init, headers });
 }
 
+async function lineDataApi(env: Env, path: string, init: RequestInit = {}) {
+  const accessToken = await getCredential(env, "LINE_CHANNEL_ACCESS_TOKEN");
+  if (!accessToken) return new Response("LINE token missing", { status: 503 });
+  const headers = new Headers(init.headers);
+  headers.set("Authorization", `Bearer ${accessToken}`);
+  return fetch(`https://api-data.line.me${path}`, { ...init, headers });
+}
+
 async function getIntegrationStatus(request: Request, env: Env) {
   if (!isAuthorized(request, env)) return json({ error: "未授權" }, 401);
   const values = await Promise.all(credentialNames.map(name => credentialStatus(env, name)));
@@ -336,8 +344,12 @@ async function publishRichMenu(request: Request, env: Env) {
   const menuResponse = await lineApi(env, "/v2/bot/richmenu", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ size: { width: 2500, height }, selected: input.page === "home", name: `wodejia-${input.page}-${Date.now()}`, chatBarText: (input.chatBarText || "開啟選單").slice(0, 14), areas }) });
   if (!menuResponse.ok) return json({ error: "LINE Rich Menu 建立失敗", detail: await menuResponse.text() }, menuResponse.status);
   const { richMenuId } = await menuResponse.json() as { richMenuId: string };
-  const upload = await lineApi(env, `/v2/bot/richmenu/${richMenuId}/content`, { method: "POST", headers: { "Content-Type": imageType }, body: imageBytes.buffer as ArrayBuffer });
-  if (!upload.ok) return json({ error: "Rich Menu 圖片上傳失敗", detail: await upload.text() }, upload.status);
+  const upload = await lineDataApi(env, `/v2/bot/richmenu/${richMenuId}/content`, { method: "POST", headers: { "Content-Type": imageType }, body: imageBytes.buffer as ArrayBuffer });
+  if (!upload.ok) {
+    const detail = await upload.text();
+    await lineApi(env, `/v2/bot/richmenu/${richMenuId}`, { method: "DELETE" });
+    return json({ error: "Rich Menu 圖片上傳失敗", detail }, upload.status);
+  }
   const aliasId = `wodejia-${input.page}`;
   const aliasBody = JSON.stringify({ richMenuAliasId: aliasId, richMenuId });
   const alias = await lineApi(env, "/v2/bot/richmenu/alias", { method: "POST", headers: { "Content-Type": "application/json" }, body: aliasBody });
