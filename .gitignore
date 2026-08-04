@@ -8,3 +8,4 @@ dist/
 work/
 outputs/
 *.log
+*.tsbuildinfo

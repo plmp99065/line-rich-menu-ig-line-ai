@@ -94,6 +94,6 @@ export function AppShell() {
     </aside>
     <div className="main-stage"><header className="mobile-header"><button onClick={() => setMobileOpen(!mobileOpen)} aria-label="開啟完整選單"><Menu/></button><strong>窩的家客服</strong><span><Sparkles size={16}/> 同步中</span></header>{render()}</div>
     <nav className="mobile-tabbar" aria-label="手機導覽">{mobileNav.map(item => <button key={item.id} className={active === item.id ? "active" : ""} onClick={() => setActive(item.id)}><item.icon size={21}/><span>{item.label}</span>{item.count ? <b>{item.count}</b> : null}</button>)}</nav>
-    {mobileOpen && <button className="scrim" aria-label="關閉選單" onClick={() => setMobileOpen(false)}/>} 
+    {mobileOpen && <button className="scrim" aria-label="關閉選單" onClick={() => setMobileOpen(false)}/>}
   </div>;
 }
