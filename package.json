@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "build:sites": "vite build",
+    "build:github": "cross-env GITHUB_PAGES=true vite build",
     "preview:sites": "vite preview",
     "start": "next start",
     "lint": "eslint ."
@@ -22,6 +23,7 @@
     "@cloudflare/vite-plugin": "1.37.1",
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "0.5.26",
+    "cross-env": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",

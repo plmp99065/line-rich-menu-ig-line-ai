@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>PayloadContent</key>
+  <array>
+    <dict>
+      <key>FullScreen</key>
+      <true/>
+      <key>IgnoreManifestScope</key>
+      <false/>
+      <key>IsRemovable</key>
+      <true/>
+      <key>Label</key>
+      <string>我de家客服</string>
+      <key>PayloadDescription</key>
+      <string>在主畫面加入我de家 LINE 客服管理後台。</string>
+      <key>PayloadDisplayName</key>
+      <string>我de家客服</string>
+      <key>PayloadIdentifier</key>
+      <string>tw.wodejia.line-console.webclip</string>
+      <key>PayloadType</key>
+      <string>com.apple.webClip.managed</string>
+      <key>PayloadUUID</key>
+      <string>6B73862A-27F5-45F1-9C15-98C4E4755D49</string>
+      <key>PayloadVersion</key>
+      <integer>1</integer>
+      <key>Precomposed</key>
+      <true/>
+      <key>URL</key>
+      <string>https://plmp99065.github.io/line-rich-menu-ig-line-ai/</string>
+    </dict>
+  </array>
+  <key>PayloadDescription</key>
+  <string>安裝我de家 LINE 客服管理後台的主畫面捷徑。不含 VPN、憑證、密碼或裝置管理權限。</string>
+  <key>PayloadDisplayName</key>
+  <string>我de家客服</string>
+  <key>PayloadIdentifier</key>
+  <string>tw.wodejia.line-console.profile</string>
+  <key>PayloadOrganization</key>
+  <string>我de家</string>
+  <key>PayloadRemovalDisallowed</key>
+  <false/>
+  <key>PayloadType</key>
+  <string>Configuration</string>
+  <key>PayloadUUID</key>
+  <string>394EDEE2-D43F-4D2C-A1BC-0796D2214CD7</string>
+  <key>PayloadVersion</key>
+  <integer>1</integer>
+</dict>
+</plist>

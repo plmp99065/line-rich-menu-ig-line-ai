@@ -6,7 +6,13 @@ interface Env {
   LINE_CHANNEL_ACCESS_TOKEN?: string;
 }
 
-const json = (data: unknown, status = 200) => Response.json(data, { status });
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "https://plmp99065.github.io",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+};
+
+const json = (data: unknown, status = 200) => Response.json(data, { status, headers: corsHeaders });
 
 async function openAiDraft(request: Request, env: Env) {
   const input = await request.json<{ message?: string; context?: string }>();
@@ -62,6 +68,7 @@ async function publishRichMenu(request: Request, env: Env) {
 export default {
   async fetch(request: Request, env: Env) {
     const url = new URL(request.url);
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
     if (url.pathname === "/api/health") return json({ ok: true, service: "wodejia-line-console", aiConfigured: Boolean(env.OPENAI_API_KEY), lineConfigured: Boolean(env.LINE_CHANNEL_SECRET && env.LINE_CHANNEL_ACCESS_TOKEN) });
     if (url.pathname === "/api/ai/draft" && request.method === "POST") return openAiDraft(request, env);
     if (url.pathname === "/api/line/webhook" && request.method === "POST") return lineWebhook(request, env);

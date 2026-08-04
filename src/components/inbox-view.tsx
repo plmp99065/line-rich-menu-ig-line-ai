@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, Check, ChevronDown, Clock3, Edit3, MessageCircle, MoreHorizontal, Paperclip, Search, Send, Sparkles, UserRound, X } from "lucide-react";
 import { conversations as seed } from "@/lib/demo-data";
+import { apiUrl } from "@/lib/api";
 import type { Conversation, Message } from "@/lib/types";
 
 export function InboxView() {
@@ -26,7 +27,7 @@ export function InboxView() {
     setLoading(true);
     try {
       const last = [...selected.messages].reverse().find(m => m.role === "customer")?.text || selected.preview;
-      const response = await fetch("/api/ai/draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: last, context: "住宿五天參考價 NT$1,800。即時空房一律轉人工確認。可提供接送服務，範圍與費用需確認地址。" }) });
+      const response = await fetch(apiUrl("/api/ai/draft"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: last, context: "住宿五天參考價 NT$1,800。即時空房一律轉人工確認。可提供接送服務，範圍與費用需確認地址。" }) });
       const data = await response.json();
       if (data.draft) setDraft(data.draft);
     } finally { setLoading(false); }
