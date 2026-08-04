@@ -14,6 +14,8 @@ export function InboxView({ accessCode }: { accessCode: string }) {
   const [draft, setDraft] = useState("您好～感謝提供資訊！6/10～6/14 兩隻黃金鼠的房況需要由人員確認，我先為您保留詢問紀錄。住宿五天的參考費用為 NT$1,800，確認房況後會再回覆您。需要我同時協助確認接送嗎？");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sendStatus, setSendStatus] = useState("");
   const [syncing, setSyncing] = useState(false);
   const revisionRef = useRef(0);
   const selected = items.find(c => c.id === selectedId) || items[0];
@@ -63,8 +65,19 @@ export function InboxView({ accessCode }: { accessCode: string }) {
       return next;
     });
   }
-  function send(text: string, role: Message["role"] = "agent") {
+  async function send(text: string, role: Message["role"] = "agent") {
     if (!text.trim()) return;
+    if (role !== "customer") {
+      setSending(true); setSendStatus("");
+      try {
+        const response = await fetch(apiUrl("/api/line/messages/send"), { method: "POST", headers: { "Content-Type": "application/json", "X-Admin-Code": accessCode }, body: JSON.stringify({ conversationId: selected.id, text: text.trim() }) });
+        const data = await response.json() as { demo?: boolean; error?: string };
+        if (!response.ok) { setSendStatus(data.error || "訊息傳送失敗"); return; }
+        if (!data.demo) { setInput(""); setSendStatus("已傳送至 LINE"); return; }
+        setSendStatus("示範對話已儲存；正式 LINE 顧客會直接收到訊息");
+      } catch { setSendStatus("網路中斷，訊息尚未送出"); return; }
+      finally { setSending(false); }
+    }
     updateSelected(c => ({ ...c, preview: text, messages: [...c.messages, { id: crypto.randomUUID(), role, text, time: new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit" }) }] }));
     setInput("");
   }
@@ -90,7 +103,7 @@ export function InboxView({ accessCode }: { accessCode: string }) {
         <header className="chat-header"><div className="avatar">{selected.avatar}</div><div><strong>{selected.name}</strong><span>LINE ID：{selected.lineId}</span></div><button className="text-btn"><UserRound size={16}/> 指派</button><button className="icon-btn"><MoreHorizontal size={18}/></button></header>
         <div className="messages"><div className="day-line">今天</div>{selected.messages.map(m => <div key={m.id} className={`message-row ${m.role}`}><div className="bubble">{m.text}</div><time>{m.time}</time></div>)}</div>
         <div className="draft-box"><div className="draft-head"><span><Sparkles size={16}/> AI 草稿建議</span><label>AI 草稿模式 <input type="checkbox" defaultChecked/></label></div><textarea value={draft} onChange={e=>setDraft(e.target.value)} aria-label="AI 回覆草稿"/><div className="draft-actions"><button className="primary" onClick={()=>send(draft, "ai")}><Send size={16}/> 送出回覆</button><button onClick={regenerate} disabled={loading}><Sparkles size={16}/>{loading ? "產生中…" : "重新產生"}</button><button className="danger-soft" onClick={()=>updateSelected(c=>({...c,status:"human"}))}><UserRound size={16}/> 轉人工</button></div></div>
-        <div className="composer"><div><button aria-label="附加檔案"><Paperclip size={18}/></button><button aria-label="快速回覆"><MessageCircle size={18}/></button><button className="quick">快速回覆 <ChevronDown size={14}/></button></div><div className="compose-row"><textarea placeholder="輸入訊息…（Enter 送出）" value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send(input)}}}/><button onClick={()=>send(input)} aria-label="送出"><Send size={18}/></button></div></div>
+        <div className="composer"><div className="quick-replies">{["您好，已收到您的訊息", "請稍候，我們正在確認", "需要轉由人工客服協助", "謝謝您的耐心等候"].map(text => <button key={text} onClick={() => setInput(text)}>{text}</button>)}</div>{sendStatus && <div className="send-status">{sendStatus}</div>}<div className="composer-tools"><button aria-label="附加檔案"><Paperclip size={18}/></button><button aria-label="快速回覆"><MessageCircle size={18}/></button><button className="quick">常用回覆 <ChevronDown size={14}/></button></div><div className="compose-row"><textarea placeholder="輸入訊息…（Enter 送出）" value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();void send(input)}}}/><button onClick={()=>void send(input)} disabled={sending || !input.trim()} aria-label="送出"><Send size={18}/></button></div></div>
       </section>
       <aside className="customer-panel">
         <div className="customer-title"><h2>顧客資訊</h2><button><X size={18}/></button></div><div className="customer-id"><div className="avatar big">{selected.avatar}</div><div><strong>{selected.name}</strong><span>{selected.lineId}</span></div><button><Edit3 size={16}/></button></div>

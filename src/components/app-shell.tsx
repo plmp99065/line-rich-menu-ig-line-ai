@@ -78,7 +78,7 @@ export function AppShell() {
   const render = () => {
     if (active === "dashboard") return <Dashboard onNavigate={setActive} />;
     if (active === "inbox") return <InboxView accessCode={accessCode} />;
-    if (active === "richMenu") return <RichMenuEditor />;
+    if (active === "richMenu") return <RichMenuEditor accessCode={accessCode} />;
     if (active === "knowledge") return <KnowledgeBase />;
     if (active === "analytics") return <Analytics />;
     if (active === "ai") return <AiSettings />;

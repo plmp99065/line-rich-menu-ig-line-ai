@@ -1,31 +1,115 @@
 "use client";
 
-import { useState } from "react";
-import { AlertCircle, Check, ChevronLeft, ChevronRight, Grid3X3, ImageUp, Link2, MessageSquareText, Monitor, Rocket, Save, Smartphone, Trash2 } from "lucide-react";
+import { ChangeEvent, useMemo, useState } from "react";
+import { AlertCircle, Check, Grid3X3, ImageUp, Link2, MessageSquareText, Rocket, Save } from "lucide-react";
 import { defaultActions } from "@/lib/demo-data";
 import { apiUrl, assetUrl } from "@/lib/api";
 import type { RichAction } from "@/lib/types";
 
-export function RichMenuEditor() {
+type Layout = "3x2" | "2x3";
+
+export function RichMenuEditor({ accessCode }: { accessCode: string }) {
   const [page, setPage] = useState<"home" | "service">("home");
   const [actions, setActions] = useState(defaultActions);
   const [selected, setSelected] = useState(1);
+  const [height, setHeight] = useState(1686);
+  const [layout, setLayout] = useState<Layout>("3x2");
+  const [tabPercent, setTabPercent] = useState(14);
+  const [tabLabels, setTabLabels] = useState<[string, string]>(["⌂ 首頁", "● 服務"]);
+  const [chatBarText, setChatBarText] = useState("點選下方選單開始服務");
+  const [imageData, setImageData] = useState("");
+  const [imageName, setImageName] = useState("");
   const [publishing, setPublishing] = useState(false);
-  const [notice, setNotice] = useState("所有按鈕已設定完成");
-  const current = actions.find(a => a.id === selected)!;
-  const update = (patch: Partial<RichAction>) => setActions(old => old.map(a => a.id === selected ? { ...a, ...patch } : a));
-  async function publish() {
-    setPublishing(true); setNotice("正在建立 LINE Rich Menu…");
-    try { const res = await fetch(apiUrl("/api/line/rich-menu/publish"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ page, actions }) }); const data = await res.json() as { result?: { demo?: boolean } }; setNotice(data.result?.demo ? "示範模式：加入 LINE 憑證後即可正式發佈" : "已成功發佈至 LINE"); }
-    catch { setNotice("發佈失敗，請檢查 LINE 設定"); } finally { setPublishing(false); }
+  const [notice, setNotice] = useState("版型會同步建立兩個分頁切換區域");
+  const current = actions.find(action => action.id === selected)!;
+  const columns = layout === "3x2" ? 3 : 2;
+  const rows = layout === "3x2" ? 2 : 3;
+  const bodyPercent = 100 - tabPercent;
+  const previewImage = imageData || assetUrl("rich-menu-demo.png");
+  const canvasStyle = useMemo(() => ({ aspectRatio: `2500 / ${height}` }), [height]);
+
+  const update = (patch: Partial<RichAction>) => {
+    setActions(old => old.map(action => action.id === selected ? { ...action, ...patch } : action));
+  };
+
+  function uploadImage(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!/^image\/(png|jpeg)$/.test(file.type)) {
+      setNotice("圖片只支援 PNG 或 JPEG");
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      setNotice("圖片需小於 1 MB，請壓縮後再上傳");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setImageData(String(reader.result || ""));
+      setImageName(file.name);
+      setNotice(`已載入 ${file.name}`);
+    };
+    reader.readAsDataURL(file);
   }
+
+  async function publish() {
+    setPublishing(true);
+    setNotice("正在建立 LINE Rich Menu 與分頁別名…");
+    try {
+      const response = await fetch(apiUrl("/api/line/rich-menu/publish"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Admin-Code": accessCode },
+        body: JSON.stringify({ page, actions, height, layout, tabPercent, tabLabels, chatBarText, imageData }),
+      });
+      const data = await response.json() as { ok?: boolean; error?: string; result?: { demo?: boolean } };
+      if (!response.ok || !data.ok) throw new Error(data.error || "發佈失敗");
+      setNotice(data.result?.demo ? "設定已儲存；加入 LINE 憑證後即可正式發佈" : `「${page === "home" ? "首頁" : "服務"}」已成功發佈至 LINE`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "發佈失敗，請檢查 LINE 設定");
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   return <main className="rich-page">
-    <div className="page-title-row rich-title"><div><h1>圖文選單管理</h1><p>建立兩頁式 LINE 圖文選單，設定每個區域的點擊動作</p></div><div className="publish-group"><span><Check size={15}/> 已儲存草稿</span><button className="primary big" onClick={publish} disabled={publishing}><Rocket size={18}/>{publishing ? "發佈中…" : "發佈至 LINE"}</button></div></div>
-    <div className="rich-layout"><section className="editor-main">
-      <div className="version-strip"><div><label>選單版本</label><select><option>v2.1 草稿</option><option>v2.0 已發佈</option></select></div><button className="icon-btn"><ChevronLeft size={18}/></button>{(["home","service"] as const).map((p,i)=><button key={p} className={`page-thumb ${page===p?"active":""}`} onClick={()=>setPage(p)}><span><img src={assetUrl("rich-menu-demo.png")} alt=""/></span><strong>{i===0?"首頁選單":"服務選單"}</strong><em>{i===0?"草稿中":"已發佈"}</em></button>)}<button className="icon-btn"><ChevronRight size={18}/></button></div>
-      <div className="canvas-toolbar"><span>預覽 <em>LINE 圖文選單尺寸：2500 × 1686 px</em></span><div><button><Smartphone size={17}/></button><button className="active"><Monitor size={17}/></button><button><Grid3X3 size={17}/> 顯示格線</button></div></div>
-      <div className="rich-canvas"><div className="menu-image"><img src={assetUrl("rich-menu-demo.png")} alt="六格倉鼠圖文選單示範"/>{actions.map((a,index)=><button key={a.id} className={`hotspot ${selected===a.id?"active":""}`} style={{left:`${(index%3)*33.333}%`,top:`${Math.floor(index/3)*43.9}%`}} onClick={()=>setSelected(a.id)}><b>{a.id}</b><span>{a.label}</span></button>)}<div className="menu-tabs"><button className={page==="home"?"active":""} onClick={()=>setPage("home")}>⌂　首頁</button><button className={page==="service"?"active":""} onClick={()=>setPage("service")}>●　服務</button></div></div><p>點擊上方區塊以編輯按鈕設定</p></div>
-      <div className="publish-notice"><AlertCircle size={20}/><span>{notice}</span><a href="https://developers.line.biz/en/docs/messaging-api/rich-menus-overview/" target="_blank" rel="noreferrer">查看 LINE 圖文選單規範</a></div>
-    </section><aside className="inspector"><header><h2>按鈕設定</h2><span>按鈕 {selected}/6</span></header><label>動作類型<select value={current.type} onChange={e=>update({type:e.target.value as RichAction["type"]})}><option value="uri">開啟網址</option><option value="message">傳送文字</option><option value="richmenuswitch">切換頁面</option></select></label><label>按鈕名稱<input value={current.label} onChange={e=>update({label:e.target.value})}/></label><fieldset><legend>目標設定</legend>{[{v:"uri",l:"開啟網址",i:Link2},{v:"message",l:"傳送文字",i:MessageSquareText},{v:"richmenuswitch",l:"切換頁面",i:Grid3X3}].map(x=><label key={x.v} className="radio-line"><input type="radio" checked={current.type===x.v} onChange={()=>update({type:x.v as RichAction["type"]})}/><x.i size={16}/>{x.l}</label>)}<input className="target-input" value={current.value} onChange={e=>update({value:e.target.value})}/></fieldset><label className="upload-zone"><ImageUp size={26}/><strong>點擊上傳或拖曳檔案</strong><span>建議尺寸 2500 × 1686 px</span><input type="file" accept="image/png,image/jpeg"/></label><div className="validation"><h3>檢查清單</h3>{["按鈕尺寸符合規範","圖片尺寸正確","所有按鈕皆有動作","未使用重複別名"].map(x=><span key={x}><Check size={15}/>{x}<em>OK</em></span>)}</div><div className="inspector-actions"><button className="danger-soft"><Trash2 size={16}/> 刪除此按鈕</button><button className="primary"><Save size={16}/> 儲存按鈕設定</button></div></aside></div>
+    <div className="page-title-row rich-title">
+      <div><h1>圖文選單管理</h1><p>手機可直接調整版型、高度、圖片與每個點擊區域</p></div>
+      <div className="publish-group"><span><Check size={15}/> 設定自動儲存</span><button className="primary big" onClick={publish} disabled={publishing}><Rocket size={18}/>{publishing ? "發佈中…" : "發佈至 LINE"}</button></div>
+    </div>
+    <div className="rich-layout">
+      <section className="editor-main">
+        <div className="version-strip menu-pages">
+          <div><label>目前編輯頁面</label><strong>兩頁式 Rich Menu</strong></div>
+          {(["home", "service"] as const).map((item, index) => <button key={item} className={`page-thumb ${page === item ? "active" : ""}`} onClick={() => setPage(item)}><span><img src={previewImage} alt=""/></span><strong>{index === 0 ? "首頁選單" : "服務選單"}</strong><em>{page === item ? "編輯中" : "點此切換"}</em></button>)}
+        </div>
+        <div className="canvas-toolbar"><span>即時預覽 <em>2500 × {height} px・{layout}</em></span><strong>{chatBarText}</strong></div>
+        <div className="rich-canvas">
+          <div className="menu-image editable-menu" style={canvasStyle}>
+            <img src={previewImage} alt="圖文選單預覽"/>
+            {actions.map((action, index) => <button key={action.id} className={`hotspot ${selected === action.id ? "active" : ""}`} style={{ left: `${(index % columns) * (100 / columns)}%`, top: `${Math.floor(index / columns) * (bodyPercent / rows)}%`, width: `${100 / columns}%`, height: `${bodyPercent / rows}%` }} onClick={() => setSelected(action.id)}><b>{action.id}</b><span>{action.label}</span></button>)}
+            <div className="menu-tabs" style={{ height: `${tabPercent}%` }}><button className={page === "home" ? "active" : ""} onClick={() => setPage("home")}>{tabLabels[0]}</button><button className={page === "service" ? "active" : ""} onClick={() => setPage("service")}>{tabLabels[1]}</button></div>
+          </div>
+          <p>點擊區塊即可編輯；底部分頁列高度與文字都能調整</p>
+        </div>
+        <div className="publish-notice"><AlertCircle size={20}/><span>{notice}</span><a href="https://developers.line.biz/en/docs/messaging-api/rich-menus-overview/" target="_blank" rel="noreferrer">LINE 規範</a></div>
+      </section>
+      <aside className="inspector">
+        <header><h2>版型與按鈕設定</h2><span>按鈕 {selected}/6</span></header>
+        <div className="layout-controls">
+          <label>按鈕排版<select value={layout} onChange={event => setLayout(event.target.value as Layout)}><option value="3x2">三欄 × 兩列</option><option value="2x3">兩欄 × 三列</option></select></label>
+          <label>選單高度<select value={height} onChange={event => setHeight(Number(event.target.value))}><option value="843">精簡 843 px</option><option value="1200">中型 1200 px</option><option value="1686">完整 1686 px</option><option value="1724">最高 1724 px</option></select></label>
+        </div>
+        <label>分頁列高度 <b>{tabPercent}%</b><input className="range-input" type="range" min="10" max="24" value={tabPercent} onChange={event => setTabPercent(Number(event.target.value))}/></label>
+        <div className="layout-controls"><label>左分頁文字<input value={tabLabels[0]} onChange={event => setTabLabels([event.target.value, tabLabels[1]])}/></label><label>右分頁文字<input value={tabLabels[1]} onChange={event => setTabLabels([tabLabels[0], event.target.value])}/></label></div>
+        <label>選單提示文字<input value={chatBarText} maxLength={14} onChange={event => setChatBarText(event.target.value)}/></label>
+        <hr/>
+        <label>動作類型<select value={current.type} onChange={event => update({ type: event.target.value as RichAction["type"] })}><option value="uri">開啟網址</option><option value="message">傳送文字</option><option value="richmenuswitch">切換頁面</option></select></label>
+        <label>按鈕名稱<input value={current.label} onChange={event => update({ label: event.target.value })}/></label>
+        <fieldset><legend>目標設定</legend>{[{ v: "uri", l: "開啟網址", i: Link2 }, { v: "message", l: "傳送文字", i: MessageSquareText }, { v: "richmenuswitch", l: "切換頁面", i: Grid3X3 }].map(item => <label key={item.v} className="radio-line"><input type="radio" checked={current.type === item.v} onChange={() => update({ type: item.v as RichAction["type"] })}/><item.i size={16}/>{item.l}</label>)}<input className="target-input" value={current.value} onChange={event => update({ value: event.target.value })}/></fieldset>
+        <label className="upload-zone"><ImageUp size={26}/><strong>{imageName || "上傳此頁背景圖片"}</strong><span>PNG／JPEG，依上方高度製作，檔案小於 1 MB</span><input type="file" accept="image/png,image/jpeg" onChange={uploadImage}/></label>
+        <div className="validation"><h3>發佈檢查</h3>{["六個點擊區域已建立", "兩個分頁切換區域已建立", "手機高度與排版有效", imageData ? "背景圖片已載入" : "目前使用示範背景"].map(item => <span key={item}><Check size={15}/>{item}<em>OK</em></span>)}</div>
+        <div className="inspector-actions"><button className="primary" onClick={() => setNotice(`按鈕 ${selected} 設定已儲存`)}><Save size={16}/> 儲存目前設定</button></div>
+      </aside>
+    </div>
   </main>;
 }

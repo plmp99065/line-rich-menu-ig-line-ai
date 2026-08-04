@@ -11,6 +11,7 @@ export type Conversation = {
   id: string;
   name: string;
   lineId: string;
+  lineUserId?: string;
   avatar: string;
   preview: string;
   time: string;
