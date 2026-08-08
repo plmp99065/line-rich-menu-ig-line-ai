@@ -31,8 +31,10 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
   const [previewMode, setPreviewMode] = useState<"menu" | "reply">("menu");
   const [inspectorTab, setInspectorTab] = useState<"layout" | "action" | "reply">("action");
   const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
   const replyImageRef = useRef<HTMLInputElement>(null);
   const imageEditRevision = useRef<Record<MenuPage, number>>({ home: 0, service: 0 });
+  const imageDirty = useRef<Record<MenuPage, boolean>>({ home: false, service: false });
   const [replyImageTarget, setReplyImageTarget] = useState<string | null>(null);
   const actions = actionsByPage[page];
   const current = actions.find(action => action.id === selected)!;
@@ -52,11 +54,19 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
       .then(data => {
         if (!active || !data) return;
         if (data.actions?.length) setActionsByPage(old => ({ ...old, [page]: old[page].map(action => ({ ...action, ...data.actions!.find(saved => saved.id === action.id) })) }));
-        if (data.menuImage?.data && imageEditRevision.current[page] === editRevision) setImages(old => ({ ...old, [page]: { data: data.menuImage!.data!, name: data.menuImage!.name || `已發佈選單 v${data.menuImage!.version || ""}` } }));
+        if (data.menuImage?.data && !imageDirty.current[page] && imageEditRevision.current[page] === editRevision) setImages(old => ({ ...old, [page]: { data: data.menuImage!.data!, name: data.menuImage!.name || `已發佈選單 v${data.menuImage!.version || ""}` } }));
       })
       .catch(() => undefined);
     return () => { active = false; };
-  }, [accessCode, page]);
+  }, [accessCode, page, refreshTick]);
+
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === "visible") setRefreshTick(value => value + 1); };
+    const timer = window.setInterval(refresh, 15000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); };
+  }, []);
 
   const update = (patch: Partial<RichAction>) => {
     setActionsByPage(old => ({ ...old, [page]: old[page].map(action => action.id === selected ? { ...action, ...patch } : action) }));
@@ -91,6 +101,7 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
     const reader = new FileReader();
     reader.onload = () => {
       imageEditRevision.current[page] += 1;
+      imageDirty.current[page] = true;
       setImages(old => ({ ...old, [page]: { data: String(reader.result || ""), name: file.name } }));
       setNotice(`已載入 ${file.name}`);
     };
@@ -145,6 +156,7 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
       if (!response.ok || !data.ok) throw new Error(data.error || "發佈失敗");
       if (data.result?.menuImage?.data) {
         imageEditRevision.current[page] += 1;
+        imageDirty.current[page] = false;
         setImages(old => ({ ...old, [page]: { data: data.result!.menuImage!.data, name: data.result!.menuImage!.name } }));
       }
       setNotice(data.result?.demo ? "設定已儲存；加入 LINE 憑證後即可正式發佈" : `「${page === "home" ? "首頁" : "服務"}」已成功發佈至 LINE`);
