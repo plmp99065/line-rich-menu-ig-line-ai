@@ -287,8 +287,9 @@ async function openAiDraft(request: Request, env: Env) {
   if (!input.message?.trim()) return json({ error: "訊息不能空白" }, 400);
   const risky = /空房|名額|是否有房|生病|受傷|流血|用藥|緊急|不吃|退款|退費|客訴|爭議|申訴/.test(input.message);
   const riskLabel = risky ? "此問題需要人工確認" : "可由 AI 協助草擬";
+  const intent = /住宿|空房|入住|退房/.test(input.message) ? "住宿諮詢" : /接送|地址/.test(input.message) ? "接送安排" : /商品|飼料|配送|運費/.test(input.message) ? "商品與配送" : /退款|退費|客訴|爭議/.test(input.message) ? "退款或客訴" : /生病|受傷|用藥|不吃/.test(input.message) ? "健康與緊急狀況" : "一般詢問";
   const apiKey = await getCredential(env, "OPENAI_API_KEY");
-  if (!apiKey) return json({ draft: "您好，已收到您的訊息，我們會由客服人員確認後盡快回覆您。", requiresHuman: risky, riskLabel, sources: [] });
+  if (!apiKey) return json({ draft: "您好，已收到您的訊息，我們會由客服人員確認後盡快回覆您。", requiresHuman: risky, riskLabel, sources: [], confidence: risky ? 42 : 58, intent });
   const [settings, knowledge] = await Promise.all([
     readAiSettings(env),
     env.DB.prepare("SELECT title, content FROM knowledge_documents WHERE content <> '' ORDER BY updated_at DESC LIMIT 8").all<{ title: string; content: string }>(),
@@ -303,12 +304,13 @@ async function openAiDraft(request: Request, env: Env) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: settings.model || env.OPENAI_MODEL || "gpt-5-mini", instructions: `你是窩的家客服助理。${settings.tone}。${styleInstruction}。只能使用參考資料中確定的內容；沒有資料時直接說需要人工確認，不得自行猜測價格、空房、庫存、健康處置或退款結果。遇到以下情況需明確表示轉由人工確認：${settings.handoffRules.join("、")}。回覆控制在 120 個中文字內，先回答問題，再提出一個最必要的下一步。參考資料：${knowledgeContext || input.context || "無"}`, input: input.message, max_output_tokens: 220 }),
+    body: JSON.stringify({ model: settings.model || env.OPENAI_MODEL || "gpt-5-mini", instructions: `你是窩的家客服助理。${settings.tone}。${styleInstruction}。只能使用參考資料中確定的內容；沒有資料時直接說需要人工確認，不得自行猜測價格、空房、庫存、健康處置或退款結果。遇到以下情況需明確表示轉由人工確認：${settings.handoffRules.join("、")}。回覆控制在 120 個中文字內，先直接回答，再補一個最必要的下一步；避免重複問顧客已提供的資料。參考資料：${knowledgeContext || "無"}。最近對話：${input.context || "無"}`, input: input.message, max_output_tokens: 220 }),
   });
   if (!response.ok) return json({ error: "AI 暫時無法產生草稿" }, 502);
   const result = await response.json() as { output_text?: string; output?: Array<{ content?: Array<{ text?: string }> }> };
   const draft = result.output_text || result.output?.flatMap(item => item.content || []).map(item => item.text || "").join("") || "請由人工客服確認。";
-  return json({ draft, requiresHuman: risky, riskLabel, sources });
+  const confidence = Math.max(28, Math.min(96, 48 + sources.length * 16 - (risky ? 20 : 0)));
+  return json({ draft, requiresHuman: risky, riskLabel, sources, confidence, intent });
 }
 
 async function verifyLine(body: string, signature: string | null, secret?: string) {
@@ -347,10 +349,21 @@ async function lineWebhook(request: Request, env: Env) {
       const reply = await env.DB.prepare("SELECT page, action_id AS actionId, response_mode AS responseMode, reply_text AS replyText, image_base64 AS imageBase64, image_version AS imageVersion FROM rich_menu_responses WHERE trigger_text = ? ORDER BY updated_at DESC LIMIT 1")
         .bind(text).first<{ page: string; actionId: number; responseMode: "text" | "image" | "text_image"; replyText?: string; imageBase64?: string; imageVersion: number }>();
       if (reply) {
-        const imageUrl = `${new URL(request.url).origin}/api/public/reply-image/${reply.page}/${reply.actionId}?v=${reply.imageVersion}`;
         const messages: Array<Record<string, string>> = [];
-        if ((reply.responseMode === "image" || reply.responseMode === "text_image") && reply.imageBase64) messages.push({ type: "image", originalContentUrl: imageUrl, previewImageUrl: imageUrl });
-        if ((reply.responseMode === "text" || reply.responseMode === "text_image") && reply.replyText?.trim()) messages.push({ type: "text", text: reply.replyText.trim() });
+        const replyItems = parseReplyItems(reply.replyText);
+        if (replyItems?.length) {
+          replyItems.forEach((item, index) => {
+            if (item.type === "text" && item.text?.trim()) messages.push({ type: "text", text: item.text.trim().slice(0, 5000) });
+            if (item.type === "image") {
+              const imageUrl = `${new URL(request.url).origin}/api/public/reply-image/${reply.page}/${reply.actionId}/${index}?v=${reply.imageVersion}`;
+              messages.push({ type: "image", originalContentUrl: imageUrl, previewImageUrl: imageUrl });
+            }
+          });
+        } else {
+          const imageUrl = `${new URL(request.url).origin}/api/public/reply-image/${reply.page}/${reply.actionId}?v=${reply.imageVersion}`;
+          if ((reply.responseMode === "image" || reply.responseMode === "text_image") && reply.imageBase64) messages.push({ type: "image", originalContentUrl: imageUrl, previewImageUrl: imageUrl });
+          if ((reply.responseMode === "text" || reply.responseMode === "text_image") && reply.replyText?.trim()) messages.push({ type: "text", text: reply.replyText.trim() });
+        }
         if (messages.length) await lineApi(env, "/v2/bot/message/reply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ replyToken: event.replyToken, messages }) });
       } else {
         const settings = await readAiSettings(env);
@@ -385,8 +398,36 @@ async function sendLineMessage(request: Request, env: Env) {
   return json({ ok: true, demo: false, message: sent });
 }
 
+async function deleteConversationMessage(request: Request, env: Env, conversationId: string, messageId: string) {
+  if (!isAuthorized(request, env)) return json({ error: "未授權" }, 401);
+  const current = await readConversationState(env);
+  const index = current.conversations.findIndex(item => item.id === conversationId);
+  if (index < 0) return json({ error: "找不到對話" }, 404);
+  const conversation = current.conversations[index];
+  const messages = (conversation.messages || []) as Array<Record<string, unknown>>;
+  if (!messages.some(message => message.id === messageId)) return json({ error: "找不到訊息" }, 404);
+  const nextMessages = messages.filter(message => message.id !== messageId);
+  const last = nextMessages[nextMessages.length - 1];
+  current.conversations[index] = { ...conversation, messages: nextMessages, preview: String(last?.text || "尚無訊息"), time: String(last?.time || conversation.time || "") };
+  await Promise.all([
+    writeConversationState(env, current.conversations),
+    env.DB.prepare("DELETE FROM message_attachments WHERE id = ?").bind(messageId).run(),
+  ]);
+  return json({ ok: true, conversation: current.conversations[index] });
+}
+
 type ReplyMode = "text" | "image" | "text_image";
-type RichActionInput = { id: number; label: string; type: "uri" | "message" | "richmenuswitch"; value: string; responseMode?: ReplyMode; replyText?: string; replyImageData?: string; replyImageName?: string };
+type ReplyItemInput = { id?: string; type: "text" | "image"; text?: string; imageData?: string; imageUrl?: string; imageName?: string };
+type RichActionInput = { id: number; label: string; type: "uri" | "message" | "richmenuswitch"; value: string; responseMode?: ReplyMode; replyText?: string; replyImageData?: string; replyImageName?: string; replyItems?: ReplyItemInput[] };
+const replySequencePrefix = "__WJ_SEQUENCE_V1__";
+
+function parseReplyItems(value?: string): ReplyItemInput[] | null {
+  if (!value?.startsWith(replySequencePrefix)) return null;
+  try {
+    const parsed = JSON.parse(value.slice(replySequencePrefix.length));
+    return Array.isArray(parsed) ? parsed.slice(0, 5) : null;
+  } catch { return null; }
+}
 
 function validateRichAction(action: RichActionInput) {
   if (!action.label.trim()) return `按鈕 ${action.id} 缺少名稱`;
@@ -432,13 +473,21 @@ async function getRichMenuResponses(request: Request, env: Env) {
     .bind(page).all<{ id: number; label?: string; type?: RichActionInput["type"]; value?: string; responseMode: ReplyMode; replyText: string; replyImageName?: string; imageVersion: number; hasImage: number }>();
   const published = await getPublishedRichMenuActions(env, page);
   const origin = new URL(request.url).origin;
-  return json({ ok: true, actions: rows.results.map(row => {
+  const storedMenuImage = await env.DB.prepare("SELECT value FROM app_settings WHERE key = ?").bind(`rich_menu_image_${page}`).first<{ value?: string }>();
+  let menuImage: { data?: string; name?: string; version?: number } | undefined;
+  try { menuImage = storedMenuImage?.value ? JSON.parse(storedMenuImage.value) : undefined; } catch { menuImage = undefined; }
+  return json({ ok: true, menuImage, actions: rows.results.map(row => {
     const liveAction = published.find(action => action.id === row.id);
+    const sequence = parseReplyItems(row.replyText);
     return {
       ...row,
       label: row.label || liveAction?.label,
       type: row.type || liveAction?.type,
       value: row.value || liveAction?.value,
+      replyText: sequence ? "" : row.replyText,
+      replyItems: sequence?.map((item, index) => item.type === "image"
+        ? { id: item.id || `${row.id}-${index}`, type: "image", imageName: item.imageName, imageUrl: `${origin}/api/public/reply-image/${page}/${row.id}/${index}?v=${row.imageVersion}` }
+        : { id: item.id || `${row.id}-${index}`, type: "text", text: item.text || "" }),
       replyImageUrl: row.hasImage ? `${origin}/api/public/reply-image/${page}/${row.id}?v=${row.imageVersion}` : undefined,
     };
   }) });
@@ -453,9 +502,20 @@ async function saveRichMenuResponses(request: Request, env: Env) {
     const actionError = validateRichAction(action);
     if (actionError) return json({ error: actionError }, 400);
     const isMessageAction = action.type === "message";
+    const sequence = isMessageAction && Array.isArray(action.replyItems) ? action.replyItems.slice(0, 5) : [];
+    if (Array.isArray(action.replyItems) && action.replyItems.length > 5) return json({ error: `按鈕 ${action.id} 最多可傳送 5 則圖文` }, 400);
+    for (const [index, item] of sequence.entries()) {
+      if (item.type === "text" && !item.text?.trim()) return json({ error: `按鈕 ${action.id} 的第 ${index + 1} 則文字是空白的` }, 400);
+      if (item.type === "image") {
+        const match = item.imageData?.match(/^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/);
+        if (!match && !item.imageUrl) return json({ error: `按鈕 ${action.id} 的第 ${index + 1} 張圖片尚未上傳` }, 400);
+        if (match && match[2].length > 1400000) return json({ error: `按鈕 ${action.id} 的第 ${index + 1} 張圖片需小於 1 MB` }, 400);
+      }
+    }
     const mode: ReplyMode = isMessageAction && ["image", "text_image"].includes(action.responseMode || "") ? action.responseMode! : "text";
-    const existing = await env.DB.prepare("SELECT image_base64 AS imageBase64, image_mime AS imageMime, image_name AS imageName, image_version AS imageVersion FROM rich_menu_responses WHERE page = ? AND action_id = ?")
-      .bind(input.page, action.id).first<{ imageBase64?: string; imageMime?: string; imageName?: string; imageVersion?: number }>();
+    const existing = await env.DB.prepare("SELECT image_base64 AS imageBase64, image_mime AS imageMime, image_name AS imageName, image_version AS imageVersion, reply_text AS replyText FROM rich_menu_responses WHERE page = ? AND action_id = ?")
+      .bind(input.page, action.id).first<{ imageBase64?: string; imageMime?: string; imageName?: string; imageVersion?: number; replyText?: string }>();
+    const existingSequence = parseReplyItems(existing?.replyText) || [];
     let imageBase64 = existing?.imageBase64 || null;
     let imageMime = existing?.imageMime || null;
     let imageName = existing?.imageName || null;
@@ -469,17 +529,26 @@ async function saveRichMenuResponses(request: Request, env: Env) {
     if (isMessageAction && (mode === "image" || mode === "text_image") && !imageBase64) return json({ error: `按鈕 ${action.id} 請先上傳回覆圖片` }, 400);
     const triggerText = (isMessageAction ? action.value : `__disabled__${input.page}_${action.id}`).trim().slice(0, 300);
     if (!triggerText) return json({ error: `按鈕 ${action.id} 缺少觸發文字` }, 400);
+    const storedSequence = sequence.length ? sequence.map((item, index) => item.type === "text"
+      ? { id: item.id || crypto.randomUUID(), type: "text", text: item.text?.trim().slice(0, 5000) }
+      : { id: item.id || crypto.randomUUID(), type: "image", imageName: item.imageName?.slice(0, 120), imageData: item.imageData || existingSequence[index]?.imageData }) : null;
+    const storedReply = storedSequence ? `${replySequencePrefix}${JSON.stringify(storedSequence)}` : (action.replyText || "").trim().slice(0, 1000);
     await env.DB.prepare("INSERT INTO rich_menu_responses (page, action_id, action_label, action_type, action_value, trigger_text, response_mode, reply_text, image_base64, image_mime, image_name, image_version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(page, action_id) DO UPDATE SET action_label = excluded.action_label, action_type = excluded.action_type, action_value = excluded.action_value, trigger_text = excluded.trigger_text, response_mode = excluded.response_mode, reply_text = excluded.reply_text, image_base64 = excluded.image_base64, image_mime = excluded.image_mime, image_name = excluded.image_name, image_version = excluded.image_version, updated_at = CURRENT_TIMESTAMP")
-      .bind(input.page, action.id, action.label.trim().slice(0, 20), action.type, action.value.trim().slice(0, 1000), triggerText, mode, (action.replyText || "").trim().slice(0, 1000), imageBase64, imageMime, imageName, imageVersion).run();
+      .bind(input.page, action.id, action.label.trim().slice(0, 20), action.type, action.value.trim().slice(0, 1000), triggerText, storedSequence ? "sequence" : mode, storedReply, imageBase64, imageMime, imageName, imageVersion + (storedSequence ? 1 : 0)).run();
   }
   return json({ ok: true });
 }
 
-async function serveReplyImage(request: Request, env: Env, page: string, actionId: number) {
-  const row = await env.DB.prepare("SELECT image_base64 AS imageBase64, image_mime AS imageMime FROM rich_menu_responses WHERE page = ? AND action_id = ?").bind(page, actionId).first<{ imageBase64?: string; imageMime?: string }>();
-  if (!row?.imageBase64 || !row.imageMime) return new Response("Not found", { status: 404 });
-  const bytes = decodeBase64(row.imageBase64);
-  return new Response(bytes.buffer as ArrayBuffer, { headers: { "Content-Type": row.imageMime, "Cache-Control": "public, max-age=31536000, immutable" } });
+async function serveReplyImage(request: Request, env: Env, page: string, actionId: number, itemIndex?: number) {
+  const row = await env.DB.prepare("SELECT image_base64 AS imageBase64, image_mime AS imageMime, reply_text AS replyText FROM rich_menu_responses WHERE page = ? AND action_id = ?").bind(page, actionId).first<{ imageBase64?: string; imageMime?: string; replyText?: string }>();
+  const sequence = parseReplyItems(row?.replyText);
+  const sequenceData = typeof itemIndex === "number" ? sequence?.[itemIndex]?.imageData : undefined;
+  const match = sequenceData?.match(/^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/);
+  const mime = match?.[1] || row?.imageMime;
+  const base64 = match?.[2] || (typeof itemIndex === "number" ? undefined : row?.imageBase64);
+  if (!base64 || !mime) return new Response("Not found", { status: 404 });
+  const bytes = decodeBase64(base64);
+  return new Response(bytes.buffer as ArrayBuffer, { headers: { "Content-Type": mime, "Cache-Control": "public, max-age=0, must-revalidate", ETag: `"${page}-${actionId}-${itemIndex ?? "legacy"}-${base64.length}"` } });
 }
 
 function toLineAction(action: RichActionInput, origin: string, page: "home" | "service") {
@@ -500,6 +569,11 @@ async function publishRichMenu(request: Request, env: Env) {
   for (const action of input.actions) {
     const actionError = validateRichAction(action);
     if (actionError) return json({ error: actionError }, 400);
+  }
+  if (input.imageData) {
+    const storedImage = JSON.stringify({ data: input.imageData, name: `rich-menu-${input.page}-${Date.now()}`, version: Date.now() });
+    await env.DB.prepare("INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP")
+      .bind(`rich_menu_image_${input.page}`, storedImage).run();
   }
   if (!(await credentialStatus(env, "LINE_CHANNEL_ACCESS_TOKEN"))) return json({ ok: true, result: { demo: true, reason: "尚未設定 LINE Access Token" } });
   const height = input.imageData ? Math.max(500, Math.min(1724, Number(input.height) || 1686)) : 1686;
@@ -576,11 +650,13 @@ export default {
     if (url.pathname === "/api/line/webhook" && request.method === "POST") return lineWebhook(request, env);
     if (url.pathname === "/api/line/messages/send" && request.method === "POST") return sendLineMessage(request, env);
     if (url.pathname === "/api/line/messages/send-image" && request.method === "POST") return sendLineImage(request, env);
+    const messageDelete = url.pathname.match(/^\/api\/line\/messages\/([^/]+)\/([^/]+)$/);
+    if (messageDelete && request.method === "DELETE") return deleteConversationMessage(request, env, decodeURIComponent(messageDelete[1]), decodeURIComponent(messageDelete[2]));
     if (url.pathname === "/api/line/rich-menu/responses" && request.method === "GET") return getRichMenuResponses(request, env);
     if (url.pathname === "/api/line/rich-menu/responses" && request.method === "POST") return saveRichMenuResponses(request, env);
     if (url.pathname === "/api/line/rich-menu/publish" && request.method === "POST") return publishRichMenu(request, env);
-    const replyImage = url.pathname.match(/^\/api\/public\/reply-image\/(home|service)\/(\d+)$/);
-    if (replyImage && request.method === "GET") return serveReplyImage(request, env, replyImage[1], Number(replyImage[2]));
+    const replyImage = url.pathname.match(/^\/api\/public\/reply-image\/(home|service)\/(\d+)(?:\/(\d+))?$/);
+    if (replyImage && request.method === "GET") return serveReplyImage(request, env, replyImage[1], Number(replyImage[2]), replyImage[3] === undefined ? undefined : Number(replyImage[3]));
     const attachment = url.pathname.match(/^\/api\/public\/attachment\/([^/]+)$/);
     if (attachment && request.method === "GET") return serveAttachment(env, attachment[1]);
     if (url.pathname === "/api/track/rich-menu" && request.method === "GET") return trackRichMenuClick(request, env);

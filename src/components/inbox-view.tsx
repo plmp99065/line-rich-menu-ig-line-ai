@@ -1,12 +1,21 @@
 "use client";
 
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronDown, ChevronUp, Clock3, Edit3, Info, MessageCircle, MoreHorizontal, Paperclip, Plus, Save, Search, Send, Sparkles, UserRound, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BookOpen, Check, CheckCircle2, ChevronDown, ChevronUp, Clock3, Edit3, Gauge, ImageOff, Images, Info, MessageCircle, MoreHorizontal, Plus, RefreshCw, Save, Search, Send, ShieldCheck, Sparkles, Trash2, UserRound, X } from "lucide-react";
 import { conversations as seed } from "@/lib/demo-data";
 import { apiUrl } from "@/lib/api";
 import type { Conversation, Message, Order } from "@/lib/types";
 
 const quickReplies = ["您好，已收到您的訊息", "請稍候，我們正在確認", "需要轉由人工客服協助", "謝謝您的耐心等候"];
+
+function MessageImage({ message }: { message: Message }) {
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  if (!message.imageUrl) return null;
+  if (failed) return <div className="message-image-failed"><ImageOff size={24}/><strong>圖片載入失敗</strong><button onClick={() => { setFailed(false); setAttempt(value => value + 1); }}><RefreshCw size={15}/>重新載入</button></div>;
+  const source = message.imageUrl.startsWith("data:") ? message.imageUrl : `${message.imageUrl}${message.imageUrl.includes("?") ? "&" : "?"}retry=${attempt}`;
+  return <img key={attempt} className="message-image" src={source} alt={message.attachmentName || "LINE 圖片"} onError={() => setFailed(true)}/>;
+}
 
 export function InboxView({ accessCode }: { accessCode: string }) {
   const [items, setItems] = useState(seed);
@@ -15,7 +24,7 @@ export function InboxView({ accessCode }: { accessCode: string }) {
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState("您好～感謝提供資訊！此問題需要由人員確認，我先為您保留詢問紀錄，確認後會盡快回覆您。");
   const [aiStyle, setAiStyle] = useState<"brief" | "warm" | "confirm" | "handoff">("warm");
-  const [aiMeta, setAiMeta] = useState<{ requiresHuman: boolean; riskLabel: string; sources: string[] }>({ requiresHuman: true, riskLabel: "此問題需要人工確認", sources: [] });
+  const [aiMeta, setAiMeta] = useState<{ requiresHuman: boolean; riskLabel: string; sources: string[]; confidence: number; intent: string }>({ requiresHuman: true, riskLabel: "此問題需要人工確認", sources: [], confidence: 42, intent: "一般詢問" });
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -32,6 +41,9 @@ export function InboxView({ accessCode }: { accessCode: string }) {
   const [editingNote, setEditingNote] = useState(false);
   const [tagInput, setTagInput] = useState("");
   const [orderOpen, setOrderOpen] = useState(false);
+  const [messageMenuId, setMessageMenuId] = useState<string | null>(null);
+  const [deleteMessage, setDeleteMessage] = useState<Message | null>(null);
+  const [deletingMessage, setDeletingMessage] = useState(false);
   const [orderDraft, setOrderDraft] = useState({ title: "鼠鼠住宿", date: new Date().toISOString().slice(0, 10), amount: "" });
   const imageRef = useRef<HTMLInputElement>(null);
   const revisionRef = useRef(0);
@@ -115,11 +127,25 @@ export function InboxView({ accessCode }: { accessCode: string }) {
     setLoading(true);
     try {
       const last = [...selected.messages].reverse().find(message => message.role === "customer")?.text || selected.preview;
-      const response = await fetch(apiUrl("/api/ai/draft"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: last, style }) });
-      const data = await response.json() as { draft?: string; error?: string; requiresHuman?: boolean; riskLabel?: string; sources?: string[] };
-      if (data.draft) { setDraft(data.draft); setAiMeta({ requiresHuman: Boolean(data.requiresHuman), riskLabel: data.riskLabel || "AI 草稿已完成", sources: data.sources || [] }); }
+      const context = selected.messages.slice(-6).map(message => `${message.role === "customer" ? "顧客" : "客服"}：${message.text}`).join("\n");
+      const response = await fetch(apiUrl("/api/ai/draft"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: last, context, style }) });
+      const data = await response.json() as { draft?: string; error?: string; requiresHuman?: boolean; riskLabel?: string; sources?: string[]; confidence?: number; intent?: string };
+      if (data.draft) { setDraft(data.draft); setAiMeta({ requiresHuman: Boolean(data.requiresHuman), riskLabel: data.riskLabel || "AI 草稿已完成", sources: data.sources || [], confidence: data.confidence || 50, intent: data.intent || "一般詢問" }); }
       else setSendStatus(data.error || "AI 草稿產生失敗");
     } finally { setLoading(false); }
+  }
+
+  async function confirmDeleteMessage() {
+    if (!deleteMessage) return;
+    setDeletingMessage(true);
+    try {
+      const response = await fetch(apiUrl(`/api/line/messages/${encodeURIComponent(selected.id)}/${encodeURIComponent(deleteMessage.id)}`), { method: "DELETE", headers: { "X-Admin-Code": accessCode } });
+      const data = await response.json() as { conversation?: Conversation; error?: string };
+      if (!response.ok) throw new Error(data.error || "刪除訊息失敗");
+      if (data.conversation) setItems(old => old.map(item => item.id === selected.id ? data.conversation! : item));
+      setDeleteMessage(null); setMessageMenuId(null); setSendStatus("訊息已從客服後台移除");
+    } catch (error) { setSendStatus(error instanceof Error ? error.message : "刪除訊息失敗"); }
+    finally { setDeletingMessage(false); }
   }
 
   function createOrder() {
@@ -135,18 +161,18 @@ export function InboxView({ accessCode }: { accessCode: string }) {
     <div className={`inbox-layout ${detailsOpen ? "details-open" : ""}`}>
       <section className="conversation-rail"><label className="search"><Search size={17}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜尋顧客或訊息"/></label><div className="filter-tabs">{["全部", "未讀", "待處理"].map(item => <button key={item} className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>{item}<span>{item === "全部" ? items.length : item === "未讀" ? items.filter(conversation => conversation.unread).length : items.filter(conversation => conversation.status !== "resolved").length}</span></button>)}</div><div className="conversation-list">{visible.map(conversation => <button key={conversation.id} className={conversation.id === selected.id ? "conversation selected" : "conversation"} onClick={() => selectConversation(conversation.id)}><div className="avatar">{conversation.avatar}</div><span><strong>{conversation.name}<time>{conversation.time}</time></strong><em>{conversation.preview}</em></span>{conversation.unread ? <b>{conversation.unread}</b> : null}</button>)}{visible.length === 0 ? <div className="conversation-empty">找不到符合條件的對話</div> : null}</div></section>
       <section className="chat-panel"><header className="chat-header"><button className="mobile-back" aria-label="返回對話列表" onClick={() => { setMobileChatOpen(false); setDetailsOpen(false); }}><ArrowLeft size={20}/></button><div className="avatar">{selected.avatar}</div><div><strong>{selected.name}</strong><span>{selected.status === "human" ? "人工處理" : selected.status === "resolved" ? "已結案" : "AI 協助中"}</span></div><div className="header-action-wrap"><button className="text-btn" onClick={() => setAssignOpen(!assignOpen)}><UserRound size={16}/> {selected.assignee || "指派"}</button>{assignOpen ? <div className="action-menu">{["店長", "夥伴", "AI 協助"].map(name => <button key={name} onClick={() => { updateSelected(conversation => ({ ...conversation, assignee: name, status: name === "AI 協助" ? "ai" : "human" })); setAssignOpen(false); }}>{name}</button>)}</div> : null}</div><button className="icon-btn" aria-label="顧客資料" onClick={() => setDetailsOpen(!detailsOpen)}><Info size={18}/></button><div className="header-action-wrap"><button className="icon-btn" aria-label="對話操作" onClick={() => setChatMenuOpen(!chatMenuOpen)}><MoreHorizontal size={18}/></button>{chatMenuOpen ? <div className="action-menu right"><button onClick={() => { updateSelected(conversation => ({ ...conversation, status: conversation.status === "resolved" ? "human" : "resolved", unread: 0 })); setChatMenuOpen(false); }}><CheckCircle2 size={15}/>{selected.status === "resolved" ? "重新開啟" : "標示已結案"}</button><button onClick={() => { setDetailsOpen(true); setChatMenuOpen(false); }}><Info size={15}/>查看顧客資料</button></div> : null}</div></header>
-        <div className="messages"><div className="day-line">今天</div>{selected.messages.map(message => <div key={message.id} className={`message-row ${message.role}`}><div className="bubble">{message.imageUrl ? <img className="message-image" src={message.imageUrl} alt={message.attachmentName || "LINE 圖片"}/> : null}{message.text}</div><time>{message.time}</time></div>)}</div>
+        <div className="messages"><div className="day-line">今天</div>{selected.messages.map(message => <div key={message.id} className={`message-row ${message.role}`}><div className="message-content"><div className="bubble"><MessageImage message={message}/>{message.text}</div><div className="message-meta"><time>{message.time}</time><div className="message-action-wrap"><button aria-label="訊息選項" onClick={() => setMessageMenuId(messageMenuId === message.id ? null : message.id)}><MoreHorizontal size={16}/></button>{messageMenuId === message.id ? <div className="message-menu"><button onClick={() => { setDeleteMessage(message); setMessageMenuId(null); }}><Trash2 size={16}/>刪除訊息</button></div> : null}</div></div></div></div>)}</div>
         <div className={`draft-box ${aiExpanded ? "expanded" : "collapsed"}`}>
           <button className="draft-toggle" onClick={() => setAiExpanded(!aiExpanded)} aria-expanded={aiExpanded}><span><Sparkles size={16}/> AI 建議回覆</span><b className={aiMeta.requiresHuman ? "risk" : "safe"}>{aiExpanded ? "收合" : aiMeta.riskLabel}</b>{aiExpanded ? <ChevronDown size={17}/> : <ChevronUp size={17}/>}</button>
           <div className="draft-content">
             <div className="draft-head"><span>選擇回覆方式</span><label>草稿模式 <input type="checkbox" checked readOnly/></label></div>
             <div className="ai-modes">{([['brief','簡短'],['warm','親切'],['confirm','確認資料'],['handoff','轉人工']] as const).map(([value, label]) => <button key={value} className={aiStyle === value ? "active" : ""} onClick={() => { setAiStyle(value); void regenerate(value); }}>{label}</button>)}</div>
             <textarea value={draft} onChange={event => setDraft(event.target.value)} aria-label="AI 回覆草稿"/>
-            <div className={`ai-evidence ${aiMeta.requiresHuman ? "risk" : "safe"}`}><strong>{aiMeta.riskLabel}</strong><span>{aiMeta.sources.length ? `依據：${aiMeta.sources.join("、")}` : "尚無直接知識庫依據，送出前請人工確認。"}</span></div>
+            <div className={`ai-evidence ${aiMeta.requiresHuman ? "risk" : "safe"}`}><div className="ai-signal"><span><Gauge size={15}/>信心 {aiMeta.confidence}%</span><span><ShieldCheck size={15}/>{aiMeta.requiresHuman ? "需人工覆核" : "低風險"}</span><span><BookOpen size={15}/>{aiMeta.intent}</span></div><strong>{aiMeta.riskLabel}</strong><span>{aiMeta.sources.length ? `知識來源：${aiMeta.sources.join("、")}` : "尚無直接知識庫依據，送出前請人工確認。"}</span></div>
             <div className="draft-actions"><button className="primary" onClick={() => void send(draft, "ai")} disabled={sending}><Send size={16}/>送出回覆</button><button onClick={() => void regenerate()} disabled={loading}><Sparkles size={16}/>{loading ? "產生中…" : "重新產生"}</button><button className="danger-soft" onClick={() => updateSelected(conversation => ({ ...conversation, status: "human", assignee: "店長" }))}><UserRound size={16}/>轉人工</button></div>
           </div>
         </div>
-        <div className="composer">{sendStatus ? <div className="send-status" role="status">{sendStatus}</div> : null}<div className="compose-row"><div className="composer-tools"><button className="composer-plus" aria-label="更多訊息工具" onClick={() => setQuickOpen(!quickOpen)}><Plus size={20}/></button><input ref={imageRef} hidden type="file" accept="image/png,image/jpeg" onChange={event => void sendImage(event)}/>{quickOpen ? <div className="quick-menu"><button onClick={() => { setQuickOpen(false); imageRef.current?.click(); }}><Paperclip size={17}/>傳送圖片</button>{quickReplies.map(text => <button key={text} onClick={() => { setInput(text); setQuickOpen(false); }}><MessageCircle size={16}/>{text}</button>)}</div> : null}</div><textarea aria-label="輸入訊息" placeholder="輸入訊息…" value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(input); } }}/><button className="send-button" onClick={() => void send(input)} disabled={sending || !input.trim()} aria-label="送出"><Send size={18}/></button></div></div>
+        <div className="composer">{sendStatus ? <div className="send-status" role="status">{sendStatus}</div> : null}<div className="compose-row"><div className="composer-tools"><button className="composer-plus" aria-label="更多訊息工具" onClick={() => setQuickOpen(!quickOpen)}><Plus size={20}/></button><input ref={imageRef} hidden type="file" accept="image/png,image/jpeg" onChange={event => void sendImage(event)}/>{quickOpen ? <div className="quick-menu"><button onClick={() => { setQuickOpen(false); imageRef.current?.click(); }}><Images size={17}/>傳送圖片</button>{quickReplies.map(text => <button key={text} onClick={() => { setInput(text); setQuickOpen(false); }}><MessageCircle size={16}/>{text}</button>)}</div> : null}</div><textarea aria-label="輸入訊息" placeholder="輸入訊息…" value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(input); } }}/><button className="send-button" onClick={() => void send(input)} disabled={sending || !input.trim()} aria-label="送出"><Send size={18}/></button></div></div>
       </section>
       <aside className={`customer-panel ${detailsOpen ? "open" : ""}`}><div className="customer-title"><h2>顧客資訊</h2><button aria-label="關閉顧客資訊" onClick={() => setDetailsOpen(false)}><X size={18}/></button></div><div className="customer-id"><div className="avatar big">{selected.avatar}</div><div>{editingName ? <input className="inline-input" aria-label="顧客名稱" value={selected.name} onChange={event => updateSelected(conversation => ({ ...conversation, name: event.target.value }))}/> : <strong>{selected.name}</strong>}<span>{selected.lineId}</span></div><button aria-label="編輯顧客名稱" onClick={() => setEditingName(!editingName)}>{editingName ? <Save size={16}/> : <Edit3 size={16}/>}</button></div><dl><div><dt>目前狀態</dt><dd className={selected.status}>{selected.status === "human" ? "人工處理" : selected.status === "resolved" ? "已結案" : "AI 協助"}</dd></div><div><dt>負責人員</dt><dd>{selected.assignee || "尚未指派"}</dd></div></dl>
         <section className="side-section"><header><h3>標籤</h3><button aria-label="編輯標籤" onClick={() => setEditingTags(!editingTags)}><Edit3 size={15}/></button></header><div className="tags">{selected.tags.map(tag => <button key={tag} title="點擊移除" onClick={() => editingTags && updateSelected(conversation => ({ ...conversation, tags: conversation.tags.filter(item => item !== tag) }))}>{tag}</button>)}</div>{editingTags ? <div className="inline-add"><input aria-label="新增標籤" value={tagInput} onChange={event => setTagInput(event.target.value)} placeholder="新增標籤"/><button onClick={() => { if (!tagInput.trim()) return; updateSelected(conversation => ({ ...conversation, tags: [...new Set([...conversation.tags, tagInput.trim()])] })); setTagInput(""); }}>新增</button></div> : null}</section>
@@ -157,5 +183,6 @@ export function InboxView({ accessCode }: { accessCode: string }) {
       </aside>
     </div>
     {orderOpen ? <div className="modal-backdrop" role="presentation"><section className="app-modal" role="dialog" aria-modal="true" aria-labelledby="order-title"><header><h2 id="order-title">建立預約訂單</h2><button aria-label="關閉" onClick={() => setOrderOpen(false)}><X size={19}/></button></header><label>訂單名稱<input value={orderDraft.title} onChange={event => setOrderDraft(old => ({ ...old, title: event.target.value }))}/></label><label>入住日期<input type="date" value={orderDraft.date} onChange={event => setOrderDraft(old => ({ ...old, date: event.target.value }))}/></label><label>預估金額<input inputMode="numeric" value={orderDraft.amount} onChange={event => setOrderDraft(old => ({ ...old, amount: event.target.value }))} placeholder="例如 1800"/></label><footer><button onClick={() => setOrderOpen(false)}>取消</button><button className="primary" onClick={createOrder}>建立訂單</button></footer></section></div> : null}
+    {deleteMessage ? <div className="modal-backdrop message-delete-backdrop" role="presentation"><section className="app-modal delete-message-modal" role="dialog" aria-modal="true" aria-labelledby="delete-message-title"><header><div><h2 id="delete-message-title">刪除這則訊息？</h2><p>只會從客服後台紀錄移除，無法收回顧客 LINE 內已收到的訊息。</p></div><button aria-label="關閉" onClick={() => setDeleteMessage(null)}><X size={19}/></button></header><div className="delete-message-preview">{deleteMessage.imageUrl ? <MessageImage message={deleteMessage}/> : null}<span>{deleteMessage.text}</span></div><footer><button onClick={() => setDeleteMessage(null)}>取消</button><button className="delete-confirm" onClick={() => void confirmDeleteMessage()} disabled={deletingMessage}><Trash2 size={17}/>{deletingMessage ? "刪除中…" : "刪除訊息"}</button></footer></section></div> : null}
   </main>;
 }

@@ -9,6 +9,15 @@ export type Message = {
   attachmentName?: string;
 };
 
+export type RichReplyItem = {
+  id: string;
+  type: "text" | "image";
+  text?: string;
+  imageData?: string;
+  imageUrl?: string;
+  imageName?: string;
+};
+
 export type Order = { id: string; title: string; date: string; amount: number; status: "待確認" | "已確認" | "已完成" };
 
 export type Conversation = {
@@ -55,4 +64,5 @@ export type RichAction = {
   replyImageData?: string;
   replyImageName?: string;
   replyImageUrl?: string;
+  replyItems?: RichReplyItem[];
 };

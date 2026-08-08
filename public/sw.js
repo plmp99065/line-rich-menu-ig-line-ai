@@ -1,5 +1,5 @@
-const CACHE = "wodejia-console-v5";
-const APP_SHELL = ["./", "./manifest.webmanifest", "./app-icon.svg", "./install.html"];
+const CACHE = "wodejia-console-v6";
+const APP_SHELL = ["./", "./manifest.webmanifest", "./app-icon-192.png", "./app-icon-512.png", "./install.html"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(APP_SHELL)));
@@ -15,7 +15,7 @@ self.addEventListener("fetch", event => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.pathname.startsWith("/api/")) return;
   event.respondWith(
-    fetch(event.request).then(response => {
+    fetch(event.request, { cache: "no-store" }).then(response => {
       const copy = response.clone();
       caches.open(CACHE).then(cache => cache.put(event.request, copy));
       return response;

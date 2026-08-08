@@ -9,7 +9,7 @@
     :root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #15251b; background: #f4f7f5; }
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
     main { width: min(100%, 440px); background: white; border-radius: 28px; padding: 30px 24px; box-shadow: 0 18px 55px rgba(19, 57, 34, .12); }
-    .icon { width: 82px; height: 82px; border-radius: 22px; display: grid; place-items: center; color: white; background: linear-gradient(145deg, #07c755, #009f3b); font-size: 42px; margin-bottom: 20px; }
+    .icon { width: 82px; height: 82px; border-radius: 22px; display: block; object-fit: cover; margin-bottom: 20px; box-shadow: 0 8px 24px rgba(18,63,53,.18); }
     h1 { margin: 0 0 8px; font-size: 28px; }
     p { color: #5d6d62; line-height: 1.65; }
     .install { display: block; margin: 24px 0 18px; padding: 16px; border-radius: 15px; text-align: center; color: white; background: #07b53b; text-decoration: none; font-weight: 750; }
@@ -20,7 +20,7 @@
 </head>
 <body>
   <main>
-    <div class="icon">💬</div>
+    <img class="icon" src="./app-icon-192.png" alt="窩的家客服 App 圖示">
     <h1>窩的家客服</h1>
     <p>下載 Apple 描述檔，在 iPhone 主畫面加入全螢幕客服管理入口。</p>
     <a class="install" href="./wodejia-line-console.mobileconfig">下載 Apple 描述檔</a>
