@@ -33,9 +33,11 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
   const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const replyImageRef = useRef<HTMLInputElement>(null);
+  const replyImageTarget = useRef<string | null>(null);
   const imageEditRevision = useRef<Record<MenuPage, number>>({ home: 0, service: 0 });
   const imageDirty = useRef<Record<MenuPage, boolean>>({ home: false, service: false });
-  const [replyImageTarget, setReplyImageTarget] = useState<string | null>(null);
+  const actionEditRevision = useRef<Record<MenuPage, number>>({ home: 0, service: 0 });
+  const actionsDirty = useRef<Record<MenuPage, boolean>>({ home: false, service: false });
   const actions = actionsByPage[page];
   const current = actions.find(action => action.id === selected)!;
   const currentImage = images[page];
@@ -49,11 +51,12 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
   useEffect(() => {
     let active = true;
     const editRevision = imageEditRevision.current[page];
+    const actionRevision = actionEditRevision.current[page];
     void fetch(apiUrl(`/api/line/rich-menu/responses?page=${page}&refresh=${Date.now()}`), { cache: "no-store", headers: { "X-Admin-Code": accessCode } })
       .then(async response => response.ok ? await response.json() as { actions?: Partial<RichAction>[]; menuImage?: { data?: string; name?: string; version?: number } } : null)
       .then(data => {
         if (!active || !data) return;
-        if (data.actions?.length) setActionsByPage(old => ({ ...old, [page]: old[page].map(action => ({ ...action, ...data.actions!.find(saved => saved.id === action.id) })) }));
+        if (data.actions?.length && !actionsDirty.current[page] && actionEditRevision.current[page] === actionRevision) setActionsByPage(old => ({ ...old, [page]: old[page].map(action => ({ ...action, ...data.actions!.find(saved => saved.id === action.id) })) }));
         if (data.menuImage?.data && !imageDirty.current[page] && imageEditRevision.current[page] === editRevision) setImages(old => ({ ...old, [page]: { data: data.menuImage!.data!, name: data.menuImage!.name || `已發佈選單 v${data.menuImage!.version || ""}` } }));
       })
       .catch(() => undefined);
@@ -69,7 +72,17 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
   }, []);
 
   const update = (patch: Partial<RichAction>) => {
+    actionEditRevision.current[page] += 1;
+    actionsDirty.current[page] = true;
     setActionsByPage(old => ({ ...old, [page]: old[page].map(action => action.id === selected ? { ...action, ...patch } : action) }));
+  };
+
+  const openReplyImagePicker = (id: string) => {
+    replyImageTarget.current = id;
+    if (replyImageRef.current) {
+      replyImageRef.current.value = "";
+      replyImageRef.current.click();
+    }
   };
 
   const updateReplyItem = (id: string, patch: Partial<RichReplyItem>) => update({ replyItems: replyItems.map(item => item.id === id ? { ...item, ...patch } : item) });
@@ -82,8 +95,7 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
     if (replyItems.length >= 5) return setNotice("LINE 每次最多傳送 5 則圖文訊息");
     const id = crypto.randomUUID();
     update({ replyItems: [...replyItems, { id, type: "image", imageName: "新圖片" }] });
-    setReplyImageTarget(id);
-    window.setTimeout(() => replyImageRef.current?.click(), 0);
+    openReplyImagePicker(id);
   };
 
   function uploadImage(event: ChangeEvent<HTMLInputElement>) {
@@ -111,20 +123,22 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
   function uploadReplyImage(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+    const targetId = replyImageTarget.current;
+    replyImageTarget.current = null;
+    event.target.value = "";
     if (!/^image\/(png|jpeg)$/.test(file.type)) return setNotice("回覆圖片只支援 PNG 或 JPEG");
     if (file.size > 1024 * 1024) return setNotice("回覆圖片需小於 1 MB");
     const reader = new FileReader();
     reader.onload = () => {
-      if (replyImageTarget) updateReplyItem(replyImageTarget, { imageData: String(reader.result || ""), imageName: file.name, imageUrl: undefined });
+      if (targetId) updateReplyItem(targetId, { imageData: String(reader.result || ""), imageName: file.name, imageUrl: undefined });
       else update({ replyImageData: String(reader.result || ""), replyImageName: file.name, replyImageUrl: undefined });
       setNotice(`按鈕 ${selected} 已載入回覆圖片 ${file.name}`);
-      setReplyImageTarget(null);
-      event.target.value = "";
     };
     reader.readAsDataURL(file);
   }
 
   async function saveResponses(showNotice = true) {
+    const saveRevision = actionEditRevision.current[page];
     const response = await fetch(apiUrl("/api/line/rich-menu/responses"), {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Admin-Code": accessCode },
@@ -132,6 +146,7 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
     });
     const data = await response.json() as { ok?: boolean; error?: string };
     if (!response.ok || !data.ok) throw new Error(data.error || "回覆設定儲存失敗");
+    if (actionEditRevision.current[page] === saveRevision) actionsDirty.current[page] = false;
     if (showNotice) setNotice(`按鈕 ${selected} 的動作與回覆設定已儲存`);
   }
 
@@ -210,7 +225,7 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
         <div className={`inspector-pane ${inspectorTab === "reply" ? "active" : ""}`}><section className={`reply-config sequence-config ${current.type !== "message" ? "disabled" : ""}`}>
           <header><ImageIcon size={18}/><div><strong>點擊後自動回覆</strong><span>依排列順序一次傳送，最多 5 則</span></div><b>{replyItems.length}/5</b></header>
           {current.type === "message" ? <>
-            <div className="reply-sequence">{replyItems.map((item, index) => <article key={item.id} className="reply-item"><header><span>{index + 1}</span><strong>{item.type === "text" ? "文字訊息" : "圖片訊息"}</strong><button aria-label={`刪除第 ${index + 1} 則`} onClick={() => removeReplyItem(item.id)}><Trash2 size={17}/>刪除</button></header>{item.type === "text" ? <textarea value={item.text || ""} maxLength={5000} placeholder="輸入顧客會收到的文字" onChange={event => updateReplyItem(item.id, { text: event.target.value })}/> : <button className="reply-image-card" onClick={() => { setReplyImageTarget(item.id); replyImageRef.current?.click(); }}>{(item.imageData || item.imageUrl) ? <img src={item.imageData || item.imageUrl} alt={item.imageName || "回覆圖片"}/> : <ImagePlus size={27}/>}<span>{item.imageName || "點此上傳圖片"}</span><small>PNG／JPEG，小於 1 MB</small></button>}</article>)}</div>
+            <div className="reply-sequence">{replyItems.map((item, index) => <article key={item.id} className="reply-item"><header><span>{index + 1}</span><strong>{item.type === "text" ? "文字訊息" : "圖片訊息"}</strong><button aria-label={`刪除第 ${index + 1} 則`} onClick={() => removeReplyItem(item.id)}><Trash2 size={17}/>刪除</button></header>{item.type === "text" ? <textarea value={item.text || ""} maxLength={5000} placeholder="輸入顧客會收到的文字" onChange={event => updateReplyItem(item.id, { text: event.target.value })}/> : <button className="reply-image-card" onClick={() => openReplyImagePicker(item.id)}>{(item.imageData || item.imageUrl) ? <img src={item.imageData || item.imageUrl} alt={item.imageName || "回覆圖片"}/> : <ImagePlus size={27}/>}<span>{item.imageName || "點此上傳圖片"}</span><small>PNG／JPEG，小於 1 MB</small></button>}</article>)}</div>
             <div className="reply-add"><button onClick={addReplyText} disabled={replyItems.length >= 5}><Plus size={17}/>新增文字</button><button onClick={addReplyImage} disabled={replyItems.length >= 5}><ImagePlus size={17}/>新增圖片</button></div>
             <input ref={replyImageRef} hidden type="file" accept="image/png,image/jpeg" onChange={uploadReplyImage}/>
           </> : <p>選擇「傳送文字」動作後，才能由 Webhook 自動回覆圖片或文字。</p>}
