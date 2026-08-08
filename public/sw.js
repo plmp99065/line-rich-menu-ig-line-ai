@@ -1,4 +1,4 @@
-const CACHE = "wodejia-console-v6";
+const CACHE = "wodejia-console-v7";
 const APP_SHELL = ["./", "./manifest.webmanifest", "./app-icon-192.png", "./app-icon-512.png", "./install.html"];
 
 self.addEventListener("install", event => {

@@ -32,6 +32,7 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
   const [inspectorTab, setInspectorTab] = useState<"layout" | "action" | "reply">("action");
   const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
   const replyImageRef = useRef<HTMLInputElement>(null);
+  const imageEditRevision = useRef<Record<MenuPage, number>>({ home: 0, service: 0 });
   const [replyImageTarget, setReplyImageTarget] = useState<string | null>(null);
   const actions = actionsByPage[page];
   const current = actions.find(action => action.id === selected)!;
@@ -45,12 +46,13 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
 
   useEffect(() => {
     let active = true;
-    void fetch(apiUrl(`/api/line/rich-menu/responses?page=${page}`), { headers: { "X-Admin-Code": accessCode } })
+    const editRevision = imageEditRevision.current[page];
+    void fetch(apiUrl(`/api/line/rich-menu/responses?page=${page}&refresh=${Date.now()}`), { cache: "no-store", headers: { "X-Admin-Code": accessCode } })
       .then(async response => response.ok ? await response.json() as { actions?: Partial<RichAction>[]; menuImage?: { data?: string; name?: string; version?: number } } : null)
       .then(data => {
         if (!active || !data) return;
         if (data.actions?.length) setActionsByPage(old => ({ ...old, [page]: old[page].map(action => ({ ...action, ...data.actions!.find(saved => saved.id === action.id) })) }));
-        if (data.menuImage?.data) setImages(old => ({ ...old, [page]: { data: data.menuImage!.data!, name: data.menuImage!.name || `已發佈選單 v${data.menuImage!.version || ""}` } }));
+        if (data.menuImage?.data && imageEditRevision.current[page] === editRevision) setImages(old => ({ ...old, [page]: { data: data.menuImage!.data!, name: data.menuImage!.name || `已發佈選單 v${data.menuImage!.version || ""}` } }));
       })
       .catch(() => undefined);
     return () => { active = false; };
@@ -77,6 +79,7 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
   function uploadImage(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+    event.target.value = "";
     if (!/^image\/(png|jpeg)$/.test(file.type)) {
       setNotice("圖片只支援 PNG 或 JPEG");
       return;
@@ -87,6 +90,7 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
     }
     const reader = new FileReader();
     reader.onload = () => {
+      imageEditRevision.current[page] += 1;
       setImages(old => ({ ...old, [page]: { data: String(reader.result || ""), name: file.name } }));
       setNotice(`已載入 ${file.name}`);
     };
@@ -135,10 +139,14 @@ export function RichMenuEditor({ accessCode }: { accessCode: string }) {
       const response = await fetch(apiUrl("/api/line/rich-menu/publish"), {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Admin-Code": accessCode },
-        body: JSON.stringify({ page, actions, height, layout, tabPercent, tabLabels, chatBarText, imageData: currentImage.data }),
+        body: JSON.stringify({ page, actions, height, layout, tabPercent, tabLabels, chatBarText, imageData: currentImage.data, imageName: currentImage.name }),
       });
-      const data = await response.json() as { ok?: boolean; error?: string; result?: { demo?: boolean } };
+      const data = await response.json() as { ok?: boolean; error?: string; result?: { demo?: boolean; menuImage?: { data: string; name: string; version: number } } };
       if (!response.ok || !data.ok) throw new Error(data.error || "發佈失敗");
+      if (data.result?.menuImage?.data) {
+        imageEditRevision.current[page] += 1;
+        setImages(old => ({ ...old, [page]: { data: data.result!.menuImage!.data, name: data.result!.menuImage!.name } }));
+      }
       setNotice(data.result?.demo ? "設定已儲存；加入 LINE 憑證後即可正式發佈" : `「${page === "home" ? "首頁" : "服務"}」已成功發佈至 LINE`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "發佈失敗，請檢查 LINE 設定");

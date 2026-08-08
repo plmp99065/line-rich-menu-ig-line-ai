@@ -23,6 +23,8 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "https://plmp99065.github.io",
   "Access-Control-Allow-Headers": "Content-Type, X-Admin-Code, X-Device-Id",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Cache-Control": "no-store, max-age=0",
+  "Vary": "X-Admin-Code",
 };
 
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: corsHeaders });
@@ -564,18 +566,25 @@ function toLineAction(action: RichActionInput, origin: string, page: "home" | "s
 
 async function publishRichMenu(request: Request, env: Env) {
   if (!isAuthorized(request, env)) return json({ error: "未授權" }, 401);
-  const input = await request.json<{ page?: "home" | "service"; actions?: RichActionInput[]; height?: number; layout?: "3x2" | "2x3"; tabPercent?: number; tabLabels?: [string, string]; chatBarText?: string; imageData?: string }>();
+  const input = await request.json<{ page?: "home" | "service"; actions?: RichActionInput[]; height?: number; layout?: "3x2" | "2x3"; tabPercent?: number; tabLabels?: [string, string]; chatBarText?: string; imageData?: string; imageName?: string }>();
   if (!input.page || !Array.isArray(input.actions) || input.actions.length !== 6) return json({ error: "需要完整設定六個選項" }, 400);
   for (const action of input.actions) {
     const actionError = validateRichAction(action);
     if (actionError) return json({ error: actionError }, 400);
   }
-  if (input.imageData) {
-    const storedImage = JSON.stringify({ data: input.imageData, name: `rich-menu-${input.page}-${Date.now()}`, version: Date.now() });
+  const imageMatch = input.imageData?.match(/^data:(image\/(?:png|jpeg));base64,(.+)$/);
+  if (input.imageData && !imageMatch) return json({ error: "圖片格式必須是 PNG 或 JPEG" }, 400);
+  const imageVersion = Date.now();
+  const publishedImage = input.imageData ? { data: input.imageData, name: (input.imageName || `rich-menu-${input.page}-${imageVersion}`).slice(0, 160), version: imageVersion } : undefined;
+  const persistPublishedImage = async () => {
+    if (!publishedImage) return;
     await env.DB.prepare("INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP")
-      .bind(`rich_menu_image_${input.page}`, storedImage).run();
+      .bind(`rich_menu_image_${input.page}`, JSON.stringify(publishedImage)).run();
+  };
+  if (!(await credentialStatus(env, "LINE_CHANNEL_ACCESS_TOKEN"))) {
+    await persistPublishedImage();
+    return json({ ok: true, result: { demo: true, reason: "尚未設定 LINE Access Token", menuImage: publishedImage } });
   }
-  if (!(await credentialStatus(env, "LINE_CHANNEL_ACCESS_TOKEN"))) return json({ ok: true, result: { demo: true, reason: "尚未設定 LINE Access Token" } });
   const height = input.imageData ? Math.max(500, Math.min(1724, Number(input.height) || 1686)) : 1686;
   const [columns, rows] = input.layout === "2x3" ? [2, 3] : [3, 2];
   const tabHeight = Math.round(height * Math.max(0.08, Math.min(0.25, (input.tabPercent || 12) / 100)));
@@ -597,11 +606,9 @@ async function publishRichMenu(request: Request, env: Env) {
   );
   let imageType = "image/jpeg";
   let imageBytes: Uint8Array;
-  if (input.imageData) {
-    const match = input.imageData.match(/^data:(image\/(?:png|jpeg));base64,(.+)$/);
-    if (!match) return json({ error: "圖片格式必須是 PNG 或 JPEG" }, 400);
-    imageType = match[1];
-    imageBytes = decodeBase64(match[2]);
+  if (imageMatch) {
+    imageType = imageMatch[1];
+    imageBytes = decodeBase64(imageMatch[2]);
   } else {
     const defaultImage = await env.ASSETS.fetch(new Request(new URL(input.page === "home" ? "/rich-menu-hotel.jpg" : "/rich-menu-shop.jpg", request.url)));
     if (!defaultImage.ok) return json({ error: "找不到預設 Rich Menu 圖片" }, 500);
@@ -622,7 +629,8 @@ async function publishRichMenu(request: Request, env: Env) {
   const alias = await lineApi(env, "/v2/bot/richmenu/alias", { method: "POST", headers: { "Content-Type": "application/json" }, body: aliasBody });
   if (!alias.ok) await lineApi(env, `/v2/bot/richmenu/alias/${aliasId}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ richMenuId }) });
   if (input.page === "home") await lineApi(env, `/v2/bot/user/all/richmenu/${richMenuId}`, { method: "POST" });
-  return json({ ok: true, result: { demo: false, richMenuId, aliasId } });
+  await persistPublishedImage();
+  return json({ ok: true, result: { demo: false, richMenuId, aliasId, menuImage: publishedImage } });
 }
 
 export default {
