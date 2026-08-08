@@ -24,7 +24,7 @@
       <key>PayloadUUID</key>
       <string>CBFC8F7E-AB78-47E2-B34B-225DE2201CB2</string>
       <key>PayloadVersion</key>
-      <integer>2</integer>
+      <integer>1</integer>
       <key>Precomposed</key>
       <true/>
       <key>URL</key>
@@ -46,6 +46,6 @@
   <key>PayloadUUID</key>
   <string>541FB0CB-13BC-49E6-9709-D3CBBCB006F7</string>
   <key>PayloadVersion</key>
-  <integer>2</integer>
+  <integer>1</integer>
 </dict>
 </plist>
