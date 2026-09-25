@@ -39,7 +39,7 @@ export type Conversation = {
 
 export type KnowledgeDocument = { id: string; title: string; type: string; sizeBytes: number; content?: string; chunks: number; status: string; updated: string };
 
-export type AppSettings = { autoReply: boolean; model: string; tone: string; handoffRules: string[] };
+export type AppSettings = { autoReply: boolean; model: string; tone: string; handoffRules: string[]; approvedReplyBase?: string; replyBaseConfirmed?: boolean };
 
 export type Metrics = {
   conversations: number;
