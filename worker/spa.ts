@@ -1,3 +1,5 @@
+import { defaultBusinessHours, isBusinessOpen, validBusinessHours, type BusinessHours } from "../src/lib/business-hours";
+
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
@@ -178,6 +180,23 @@ const defaultAiSettings = {
   handoffRules: ["空房、即時名額或預約確認", "倉鼠生病、受傷或緊急狀況", "退款、客訴或消費爭議", "AI 信心不足或知識庫無答案"],
 };
 
+async function readBusinessHours(env: Env): Promise<BusinessHours> {
+  const row = await env.DB.prepare("SELECT value FROM app_settings WHERE key = 'business_hours'").first<{ value: string }>();
+  if (!row) return defaultBusinessHours;
+  const settings: unknown = JSON.parse(row.value);
+  if (!validBusinessHours(settings)) throw new Error("營業時間設定無效");
+  return settings;
+}
+
+async function businessHoursSettings(request: Request, env: Env) {
+  if (!isAuthorized(request, env)) return json({ error: "未授權" }, 401);
+  if (request.method === "GET") return json({ settings: await readBusinessHours(env) });
+  const settings: unknown = await request.json().catch(() => null);
+  if (!validBusinessHours(settings)) return json({ error: "請填寫有效的每日時間及休息回覆；開始與結束時間不可相同" }, 400);
+  await env.DB.prepare("INSERT INTO app_settings (key,value) VALUES ('business_hours',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP").bind(JSON.stringify(settings)).run();
+  return json({ ok: true, settings });
+}
+
 async function readAiSettings(env: Env) {
   const row = await env.DB.prepare("SELECT value FROM app_settings WHERE key = 'ai'").first<{ value: string }>();
   if (!row?.value) return defaultAiSettings;
@@ -329,8 +348,8 @@ async function lineWebhook(request: Request, env: Env) {
   if (!(await verifyLine(body, request.headers.get("x-line-signature"), channelSecret))) return json({ error: "Invalid signature" }, 401);
   const payload = JSON.parse(body) as { events?: Array<{ type: string; timestamp?: number; replyToken?: string; source?: { userId?: string }; message?: { id?: string; type: string; text?: string } }> };
   for (const event of payload.events || []) {
-    if (event.type !== "message" || event.message?.type !== "text" || !event.source?.userId) continue;
-    const text = event.message.text || "";
+    if (event.type !== "message" || !event.message || !event.source?.userId) continue;
+    const text = event.message.text || `[${event.message.type === "image" ? "圖片" : event.message.type === "sticker" ? "貼圖" : event.message.type}]`;
     const current = await readConversationState(env);
     const index = current.conversations.findIndex(item => item.lineUserId === event.source?.userId);
     let name = "LINE 顧客";
@@ -348,6 +367,32 @@ async function lineWebhook(request: Request, env: Env) {
     }
     await writeConversationState(env, current.conversations);
     if (event.replyToken && await credentialStatus(env, "LINE_CHANNEL_ACCESS_TOKEN")) {
+      const hours = await readBusinessHours(env);
+      if (hours.enabled && !isBusinessOpen(hours)) {
+        const key = `away_reply_${event.source.userId}`;
+        const now = Date.now();
+        const claim = await env.DB.prepare("INSERT INTO app_settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP WHERE CAST(app_settings.value AS INTEGER) <= ?")
+          .bind(key, String(now), now - 60 * 60 * 1000).run();
+        if (claim.meta.changes) {
+          try {
+            const response = await lineApi(env, "/v2/bot/message/reply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ replyToken: event.replyToken, messages: [{ type: "text", text: hours.message.trim() }] }) });
+            if (!response.ok) throw new Error(`休息提醒傳送失敗 (${response.status})`);
+          } catch (error) {
+            await env.DB.prepare("DELETE FROM app_settings WHERE key=? AND value=?").bind(key, String(now)).run();
+            throw error;
+          }
+        }
+        if (claim.meta.changes) {
+          const latest = await readConversationState(env);
+          const conversation = latest.conversations.find(item => item.lineUserId === event.source?.userId);
+          if (conversation) {
+            conversation.messages = [...(conversation.messages || []), { id: `away-${event.message.id || now}`, role: "agent", text: hours.message.trim(), time }];
+            await writeConversationState(env, latest.conversations);
+          }
+        }
+        continue;
+      }
+      if (event.message.type !== "text") continue;
       const reply = await env.DB.prepare("SELECT page, action_id AS actionId, response_mode AS responseMode, reply_text AS replyText, image_base64 AS imageBase64, image_version AS imageVersion FROM rich_menu_responses WHERE trigger_text = ? ORDER BY updated_at DESC LIMIT 1")
         .bind(text).first<{ page: string; actionId: number; responseMode: "text" | "image" | "text_image"; replyText?: string; imageBase64?: string; imageVersion: number }>();
       if (reply) {
@@ -645,6 +690,7 @@ export default {
     if (url.pathname === "/api/sync/conversations" && request.method === "GET") return getSharedState(request, env);
     if (url.pathname === "/api/sync/conversations" && request.method === "PUT") return putSharedState(request, env);
     if (url.pathname === "/api/metrics" && request.method === "GET") return getMetrics(request, env);
+    if (url.pathname === "/api/settings/business-hours" && ["GET", "PUT"].includes(request.method)) return businessHoursSettings(request, env);
     if (url.pathname === "/api/settings/ai" && request.method === "GET") return getAiSettings(request, env);
     if (url.pathname === "/api/settings/ai" && request.method === "PUT") return saveAiSettings(request, env);
     if (url.pathname === "/api/knowledge" && request.method === "GET") return getKnowledgeDocuments(request, env);

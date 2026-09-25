@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Bot, Check, Clipboard, KeyRound, LoaderCircle, Save, ShieldCheck, Sparkles, Webhook } from "lucide-react";
 import { apiUrl } from "@/lib/api";
 import type { AppSettings } from "@/lib/types";
+import { BusinessHoursSettings } from "./business-hours-settings";
 
 type CredentialName = "OPENAI_API_KEY" | "LINE_CHANNEL_SECRET" | "LINE_CHANNEL_ACCESS_TOKEN";
 type IntegrationStatus = { configured: Record<CredentialName, boolean>; webhookUrl: string };
@@ -82,6 +83,7 @@ export function SystemSettings({ accessCode }: { accessCode: string }) {
   const hasInput = Object.values(credentials).some(value => value.trim());
 
   return <main className="content-page settings-page">
+    <BusinessHoursSettings accessCode={accessCode}/>
     <div className="page-title-row"><div><h1>系統設定</h1><p>自行填入 API 憑證，儲存後由伺服器驗證連線</p></div>{loading ? <span className="saved"><LoaderCircle className="spin" size={15}/>讀取中</span> : null}</div>
     <section className="integration-list"><article><div className="integration-icon line">LINE</div><div><h2>LINE Messaging API</h2><p>接收訊息、發送回覆與管理 Rich Menu</p></div><span className={lineReady ? "connected" : "pending"}>{lineReady ? "已設定" : "待設定"}</span><button onClick={() => void test("line")} disabled={testing === "line"}>{testing === "line" ? "驗證中" : "驗證"}</button></article><article><div className="integration-icon"><Sparkles/></div><div><h2>OpenAI</h2><p>產生客服草稿與知識庫回答</p></div><span className={status.configured.OPENAI_API_KEY ? "connected" : "pending"}>{status.configured.OPENAI_API_KEY ? "已設定" : "待設定"}</span><button onClick={() => void test("openai")} disabled={testing === "openai"}>{testing === "openai" ? "驗證中" : "驗證"}</button></article></section>
     <section className="settings-card credentials-card"><header><KeyRound/><div><h2>API 憑證設定</h2><p>欄位只會送到 Cloudflare 後端並以 AES-256 加密；頁面不會讀回完整內容</p></div></header><CredentialField label="OpenAI API Key" value={credentials.OPENAI_API_KEY} configured={status.configured.OPENAI_API_KEY} placeholder="sk-…" onChange={value => setCredentials(old => ({ ...old, OPENAI_API_KEY: value }))}/><CredentialField label="LINE Channel Secret" value={credentials.LINE_CHANNEL_SECRET} configured={status.configured.LINE_CHANNEL_SECRET} placeholder="輸入 Channel Secret" onChange={value => setCredentials(old => ({ ...old, LINE_CHANNEL_SECRET: value }))}/><CredentialField label="LINE Channel Access Token" value={credentials.LINE_CHANNEL_ACCESS_TOKEN} configured={status.configured.LINE_CHANNEL_ACCESS_TOKEN} placeholder="輸入長效 Access Token" onChange={value => setCredentials(old => ({ ...old, LINE_CHANNEL_ACCESS_TOKEN: value }))}/><button className="primary credential-save" onClick={() => void saveCredentials()} disabled={saving || !hasInput}><Save size={16}/>{saving ? "加密儲存中…" : "安全儲存憑證"}</button>{notice ? <div className="settings-notice" role="status">{notice}</div> : null}</section>
